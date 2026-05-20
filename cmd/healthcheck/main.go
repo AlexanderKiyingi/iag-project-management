@@ -5,13 +5,12 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/iag/project-management/backend/internal/config"
 )
 
 func main() {
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = ":4102"
-	}
+	addr := config.ListenAddr()
 	host := addr
 	if strings.HasPrefix(host, ":") {
 		host = "127.0.0.1" + host

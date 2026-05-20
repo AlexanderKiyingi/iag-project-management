@@ -21,7 +21,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/ /app/
 
-ENV ADDR=:4102 \
+ENV PORT=4102 \
     LOG_FORMAT=json \
     AUTH_MODE=gateway \
     GIN_MODE=release
