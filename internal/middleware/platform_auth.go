@@ -43,8 +43,21 @@ func NewPlatformAuth(opts PlatformAuthOptions) *PlatformAuth {
 	}
 }
 
+func isPublicProbePath(path string) bool {
+	switch path {
+	case "/health", "/healthz", "/ready":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if isPublicProbePath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
 		switch m.authMode {
 		case "gateway":
 			m.fromGateway(c)

@@ -36,10 +36,6 @@ func New(opts Options) *gin.Engine {
 	r.Use(corsMiddleware(opts.Cfg.CORSOrigin))
 	r.Use(securityHeaders())
 
-	if opts.PlatformAuth != nil {
-		r.Use(opts.PlatformAuth.AttachPrincipal())
-	}
-
 	health := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	}
@@ -52,6 +48,10 @@ func New(opts Options) *gin.Engine {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "database": true})
 	})
+
+	if opts.PlatformAuth != nil {
+		r.Use(opts.PlatformAuth.AttachPrincipal())
+	}
 
 	api := r.Group("/api/v1")
 	svc := &workspace.Service{
