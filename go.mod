@@ -52,4 +52,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/alvor-technologies/iag-authclient => ../../../../shared/go/authclient
+replace github.com/alvor-technologies/iag-authclient => ./pkg/authclient

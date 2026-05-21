@@ -3,6 +3,7 @@ FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY pkg/authclient ./pkg/authclient
 RUN go mod download
 COPY . .
 
