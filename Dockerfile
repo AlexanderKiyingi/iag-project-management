@@ -22,6 +22,7 @@ WORKDIR /app
 COPY --from=build /out/ /app/
 
 ENV PORT=4102 \
+    AUTO_MIGRATE=true \
     LOG_FORMAT=json \
     AUTH_MODE=gateway \
     GIN_MODE=release

@@ -31,7 +31,7 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 | PUT | `/api/v1/workspace` | Save document (`If-Match` / body `version`) |
 | GET | `/api/v1/ws/workspace?token=` | WebSocket pushes `{"type":"workspace","data":...,"version":N}` |
 | * | `/api/v1/tasks`, `/goals`, `/sprints`, `/chats`, … | Per-entity REST (see `internal/handlers/entities.go`) |
-| POST | `/api/v1/requisitions` | Creates requisition + publishes `pm.requisition.submitted` |
+| POST | `/api/v1/requisitions` | Creates requisition + publishes `pm.requisition.submitted` (consumed by **iag-procurement**) |
 | POST | `/api/v1/workspace/members` | Share workspace (`pm.admin`) |
 | PATCH | `/api/v1/workspace/org` | Set `org_id` for tenancy metadata |
 

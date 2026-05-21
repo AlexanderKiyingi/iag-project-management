@@ -784,12 +784,16 @@ func (h *Entities) createRequisition(c *gin.Context) {
 	}
 	if h.Svc.Events != nil && h.Svc.Events.Enabled() {
 		h.Svc.Events.PublishCommercial(c.Request.Context(), events.TypeRequisitionSubmitted, map[string]any{
-			"requisitionId": strconv.Itoa(created.ID),
-			"title":         created.Title,
-			"amount":        fmt.Sprintf("%.2f", created.Amount),
-			"currency":      created.Currency,
-			"status":        created.Status,
-			"requestedBy":   created.RequestedBy,
+			"requisitionId":  strconv.Itoa(created.ID),
+			"title":          created.Title,
+			"amount":         fmt.Sprintf("%.2f", created.Amount),
+			"currency":       created.Currency,
+			"status":         created.Status,
+			"requestedBy":    created.RequestedBy,
+			"forDept":        created.ForDept,
+			"urgency":        created.Urgency,
+			"payee":          created.Payee,
+			"justification":  created.Justification,
 		}, strconv.Itoa(created.ID))
 		claims, _ := middleware.PlatformClaims(c)
 		if claims != nil && claims.Email != "" {
