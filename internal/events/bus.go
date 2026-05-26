@@ -1,3 +1,7 @@
+// Package events publishes project-management domain events to iag.commercial
+// on the IAG bus. Post-cutover this is the ONLY topic PM writes to —
+// notifications subscribes to iag.commercial and decides which events
+// translate to dispatch.
 package events
 
 import (
@@ -16,26 +20,28 @@ const (
 	SpecVersion = "1.0"
 	Source      = "iag.project-management"
 
-	TopicCommercial     = "iag.commercial"
-	TopicNotifications  = "iag.notifications"
+	TopicCommercial = "iag.commercial"
 
-	TypeNotificationRequested  = "notification.requested"
-	TypeRequisitionSubmitted   = "pm.requisition.submitted"
-	TypeTaskAssigned           = "pm.task.assigned"
-	TypeMentionCreated         = "pm.mention.created"
+	// Domain event types emitted by PM on iag.commercial.
+	TypePMAlertRaised        = "pm.alert.raised"
+	TypeRequisitionSubmitted = "pm.requisition.submitted"
+	TypeTaskAssigned         = "pm.task.assigned"
+	TypeMentionCreated       = "pm.mention.created"
 )
 
+// Bus publishes PM domain events to iag.commercial.
 type Bus struct {
 	commercialWriter *kafka.Writer
-	notifWriter      *kafka.Writer
 	enabled          bool
 }
 
+// Config for optional Kafka publishing.
 type Config struct {
 	Brokers []string
 	Enabled bool
 }
 
+// NewFromEnv builds a bus from EVENT_BUS_ENABLED and KAFKA_BROKERS.
 func NewFromEnv() *Bus {
 	return New(Config{
 		Brokers: ParseBrokers(os.Getenv("KAFKA_BROKERS")),
@@ -43,6 +49,7 @@ func NewFromEnv() *Bus {
 	})
 }
 
+// New constructs a Bus. Disabled bus is a safe no-op.
 func New(cfg Config) *Bus {
 	if !cfg.Enabled || len(cfg.Brokers) == 0 {
 		return &Bus{enabled: false}
@@ -54,37 +61,24 @@ func New(cfg Config) *Bus {
 			Addr:         kafka.TCP(cfg.Brokers...),
 			Topic:        TopicCommercial,
 			Balancer:     &kafka.LeastBytes{},
-			RequiredAcks: kafka.RequireOne,
-			Transport:    transport,
-		},
-		notifWriter: &kafka.Writer{
-			Addr:         kafka.TCP(cfg.Brokers...),
-			Topic:        TopicNotifications,
-			Balancer:     &kafka.LeastBytes{},
-			RequiredAcks: kafka.RequireOne,
+			RequiredAcks: kafka.RequireAll,
 			Transport:    transport,
 		},
 	}
 }
 
+// Close shuts down the underlying writer.
 func (b *Bus) Close() error {
 	if b == nil || !b.enabled {
 		return nil
 	}
-	var err error
-	if e := b.commercialWriter.Close(); e != nil {
-		err = e
-	}
-	if e := b.notifWriter.Close(); e != nil && err == nil {
-		err = e
-	}
-	return err
+	return b.commercialWriter.Close()
 }
 
-func (b *Bus) Enabled() bool {
-	return b != nil && b.enabled
-}
+// Enabled reports whether Kafka publishing is active.
+func (b *Bus) Enabled() bool { return b != nil && b.enabled }
 
+// PlatformEvent is the canonical IAG envelope (mirrors @iag/events).
 type PlatformEvent struct {
 	ID            string         `json:"id"`
 	Type          string         `json:"type"`
@@ -95,8 +89,8 @@ type PlatformEvent struct {
 	Data          map[string]any `json:"data"`
 }
 
-func (b *Bus) publish(ctx context.Context, writer *kafka.Writer, evt PlatformEvent, key string) error {
-	if !b.enabled || writer == nil {
+func (b *Bus) publish(ctx context.Context, evt PlatformEvent, key string) error {
+	if !b.enabled || b.commercialWriter == nil {
 		return nil
 	}
 	if evt.ID == "" {
@@ -118,8 +112,8 @@ func (b *Bus) publish(ctx context.Context, writer *kafka.Writer, evt PlatformEve
 	if key == "" {
 		key = evt.ID
 	}
-	return writer.WriteMessages(ctx, kafka.Message{
-		Topic: writer.Topic,
+	return b.commercialWriter.WriteMessages(ctx, kafka.Message{
+		Topic: TopicCommercial,
 		Key:   []byte(key),
 		Value: body,
 		Headers: []kafka.Header{
@@ -129,17 +123,21 @@ func (b *Bus) publish(ctx context.Context, writer *kafka.Writer, evt PlatformEve
 	})
 }
 
+// PublishCommercial emits a domain event on iag.commercial.
 func (b *Bus) PublishCommercial(ctx context.Context, eventType string, data map[string]any, key string) {
 	if !b.enabled {
 		return
 	}
 	evt := PlatformEvent{Type: eventType, Data: data}
-	if err := b.publish(ctx, b.commercialWriter, evt, key); err != nil {
+	if err := b.publish(ctx, evt, key); err != nil {
 		slog.Warn("commercial event publish failed", "type", eventType, "err", err)
 	}
 }
 
-func (b *Bus) PublishNotificationRequested(ctx context.Context, channel, recipient, templateID string, variables map[string]string) {
+// PublishPMAlert emits pm.alert.raised on iag.commercial. The notifications
+// service subscribes and converts these alerts into dispatch calls — PM no
+// longer writes directly to iag.notifications.
+func (b *Bus) PublishPMAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string) {
 	if !b.enabled || recipient == "" || templateID == "" {
 		return
 	}
@@ -148,7 +146,7 @@ func (b *Bus) PublishNotificationRequested(ctx context.Context, channel, recipie
 		vars[k] = v
 	}
 	evt := PlatformEvent{
-		Type: TypeNotificationRequested,
+		Type: TypePMAlertRaised,
 		Data: map[string]any{
 			"channel":    channel,
 			"recipient":  recipient,
@@ -156,11 +154,12 @@ func (b *Bus) PublishNotificationRequested(ctx context.Context, channel, recipie
 			"variables":  vars,
 		},
 	}
-	if err := b.publish(ctx, b.notifWriter, evt, recipient); err != nil {
-		slog.Warn("notification.requested publish failed", "recipient", recipient, "err", err)
+	if err := b.publish(ctx, evt, recipient); err != nil {
+		slog.Warn("pm.alert.raised publish failed", "recipient", recipient, "err", err)
 	}
 }
 
+// ParseBrokers splits a comma-separated KAFKA_BROKERS value.
 func ParseBrokers(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))

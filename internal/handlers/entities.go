@@ -797,7 +797,7 @@ func (h *Entities) createRequisition(c *gin.Context) {
 		}, strconv.Itoa(created.ID))
 		claims, _ := middleware.PlatformClaims(c)
 		if claims != nil && claims.Email != "" {
-			h.Svc.Events.PublishNotificationRequested(c.Request.Context(), "email", claims.Email, "pm.requisition.submitted", map[string]string{
+			h.Svc.Events.PublishPMAlert(c.Request.Context(), "email", claims.Email, "pm.requisition.submitted", map[string]string{
 				"title": created.Title,
 			})
 		}
