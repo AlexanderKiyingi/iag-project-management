@@ -11,26 +11,29 @@ FROM golang:1.25-alpine AS base
 RUN apk add --no-cache git ca-certificates
 ENV PLATFORM_GO_DEP=/deps/platform-go
 
-FROM base AS platform-go-clone
-ARG IAG_META_REF=main
-ARG IAG_META_REPO=https://github.com/AlexanderKiyingi/IAG_multi_backend.git
-RUN git clone --depth 1 --branch "${IAG_META_REF}" "${IAG_META_REPO}" /tmp/iag \
-    && mv /tmp/iag/shared/platform-go "${PLATFORM_GO_DEP}" \
-    && rm -rf /tmp/iag
-
 FROM base AS platform-go-copy
 COPY shared/platform-go ${PLATFORM_GO_DEP}
 
 FROM base AS build-standalone
-COPY --from=platform-go-clone ${PLATFORM_GO_DEP} ${PLATFORM_GO_DEP}
+# Standalone (iag-project-management repo root): the meta-repo is private, so
+# Railway can't clone it at build time. Instead the standalone repo carries a
+# committed snapshot at third_party/platform-go (refreshed via
+# scripts/sync-platform-go.sh). Copy that into /deps/platform-go and point the
+# replace directive at it.
 WORKDIR /src
+COPY third_party/platform-go ${PLATFORM_GO_DEP}
 COPY go.mod go.sum ./
 COPY pkg/authclient ./pkg/authclient
 RUN go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP} \
     && go mod download
 COPY . .
 ARG VERSION=dev
+# `COPY . .` restored go.mod from the build context, which still carries the
+# meta-repo-only `replace => ../../../shared/platform-go`. That path does not
+# exist inside the build container, so re-apply the vendored replace before
+# build.
 RUN set -eu; \
+    go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP}; \
     mkdir -p /out; \
     for cmd in . ./cmd/healthcheck ./cmd/jobs; do \
         name=$(basename "$cmd"); [ "$name" = "." ] && name=api; \
