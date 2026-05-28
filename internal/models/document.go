@@ -196,6 +196,7 @@ type Member struct {
 	Initials   string  `json:"initials"`
 	Name       string  `json:"name"`
 	Email      string  `json:"email,omitempty"`
+	UserID     string  `json:"userId,omitempty"` // canonical auth identifier; preferred match key for upstream events
 	Role       string  `json:"role"`
 	AccessRole string  `json:"accessRole"`
 	Color      string  `json:"color"`

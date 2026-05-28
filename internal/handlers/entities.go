@@ -170,7 +170,7 @@ func (h *Entities) createTask(c *gin.Context) {
 		if claims != nil {
 			email = claims.Email
 		}
-		publishTaskAssigned(c.Request.Context(), h.Svc.Events, created, actor, email)
+		publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, created, actor, email)
 	}
 	c.JSON(http.StatusOK, gin.H{"task": created, "version": ws.Version})
 }
@@ -218,7 +218,7 @@ func (h *Entities) patchTask(c *gin.Context) {
 		if claims != nil {
 			email = claims.Email
 		}
-		publishTaskAssigned(c.Request.Context(), h.Svc.Events, updated, actor, email)
+		publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, updated, actor, email)
 	}
 	respondWorkspace(c, ws)
 }
@@ -885,6 +885,11 @@ func (h *Entities) addMember(c *gin.Context) {
 	}
 	if body.Member != nil && body.Member.Initials != "" {
 		member := *body.Member
+		// Anchor the doc-level member to the canonical auth UserID. Upstream
+		// auth events (deactivate/reactivate) match on this first.
+		if member.UserID == "" {
+			member.UserID = body.UserID
+		}
 		_, err = h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
 			for i := range d.Members {
 				if d.Members[i].Initials == member.Initials {

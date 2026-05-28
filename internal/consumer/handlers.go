@@ -13,6 +13,7 @@ import (
 
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 
+	"github.com/iag/project-management/backend/internal/events"
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
@@ -20,11 +21,16 @@ import (
 
 // Event types PM listens for on iag.commercial.
 const (
-	TypeRequisitionApproved = "procurement.requisition.approved"
-	TypeRequisitionRejected = "procurement.requisition.rejected"
-	TypeContractCreated     = "contracts.contract.created"
-	TypeMilestoneDueSoon    = "contracts.milestone.due_soon"
-	TypeUserDeactivated     = "auth.user.deactivated"
+	TypeRequisitionApproved   = "procurement.requisition.approved"
+	TypeRequisitionRejected   = "procurement.requisition.rejected"
+	TypeContractCreated       = "contracts.contract.created"
+	TypeContractUpdated       = "contracts.contract.updated"
+	TypeContractDeleted       = "contracts.contract.deleted"
+	TypeContractStatusChanged = "contracts.contract.status_changed"
+	TypeAssistanceRequested   = "contracts.assistance.requested"
+	TypeMilestoneDueSoon      = "contracts.milestone.due_soon"
+	TypeUserDeactivated       = "auth.user.deactivated"
+	TypeUserReactivated       = "auth.user.reactivated"
 )
 
 // Handler routes envelopes to the right per-type handler. Unknown types are
@@ -34,8 +40,14 @@ type Handler struct {
 	Repo *store.Repository
 }
 
-// Handle implements platformevents.Handler.
+// Handle implements platformevents.Handler. Events sourced from PM itself
+// are skipped before any work happens — they reach this consumer because PM
+// publishes and subscribes to the same topic, but they describe state PM
+// already owns.
 func (h *Handler) Handle(ctx context.Context, env platformevents.Envelope) error {
+	if env.Source == events.Source {
+		return nil
+	}
 	switch env.Type {
 	case TypeRequisitionApproved:
 		return h.handleRequisition(ctx, env, "approved")
@@ -43,10 +55,18 @@ func (h *Handler) Handle(ctx context.Context, env platformevents.Envelope) error
 		return h.handleRequisition(ctx, env, "rejected")
 	case TypeContractCreated:
 		return h.handleContractCreated(ctx, env)
+	case TypeContractUpdated, TypeContractDeleted:
+		return h.handleContractLifecycle(ctx, env)
+	case TypeContractStatusChanged:
+		return h.handleContractStatusChanged(ctx, env)
+	case TypeAssistanceRequested:
+		return h.handleAssistanceRequested(ctx, env)
 	case TypeMilestoneDueSoon:
 		return h.handleMilestoneDueSoon(ctx, env)
 	case TypeUserDeactivated:
 		return h.handleUserDeactivated(ctx, env)
+	case TypeUserReactivated:
+		return h.handleUserReactivated(ctx, env)
 	default:
 		return nil
 	}
@@ -117,6 +137,125 @@ func (h *Handler) handleContractCreated(ctx context.Context, env platformevents.
 	return err
 }
 
+// handleContractLifecycle logs contracts.contract.updated and .deleted as
+// audit entries on every workspace. Contract events don't carry a workspace
+// identifier, so the broadcast is unconditional — auditing on every workspace
+// gives admins a record without adding UI notifications (these events are
+// high-frequency).
+func (h *Handler) handleContractLifecycle(ctx context.Context, env platformevents.Envelope) error {
+	no := stringField(env.Data, "no")
+	name := stringField(env.Data, "name")
+	var action string
+	switch env.Type {
+	case TypeContractUpdated:
+		action = "updated"
+	case TypeContractDeleted:
+		action = "deleted"
+	default:
+		return nil
+	}
+	list, err := h.Repo.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ws := range list {
+		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			models.AppendAudit(d, "contracts", "contracts.contract."+action,
+				fmt.Sprintf("Contract %s (%s) %s", no, name, action), nil)
+			return nil
+		}); err != nil {
+			slog.Warn("contract lifecycle consumer: mutate failed", "owner", ws.OwnerUserID, "action", action, "err", err)
+		}
+	}
+	return nil
+}
+
+// handleContractStatusChanged adds a notification on every workspace whose
+// Members include the contract owner (cs field). Falls back to audit-only if
+// no owner is identified.
+func (h *Handler) handleContractStatusChanged(ctx context.Context, env platformevents.Envelope) error {
+	no := stringField(env.Data, "no")
+	name := stringField(env.Data, "name")
+	status := stringField(env.Data, "status")
+	previousStatus := stringField(env.Data, "previousStatus")
+	owner := strings.ToLower(stringField(env.Data, "cs"))
+
+	list, err := h.Repo.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ws := range list {
+		var doc models.Document
+		if err := json.Unmarshal(ws.Document, &doc); err != nil {
+			slog.Warn("contract status consumer: skip unparsable workspace", "owner", ws.OwnerUserID, "err", err)
+			continue
+		}
+		matched := owner != "" && workspaceHasMember(&doc, owner)
+		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			if matched {
+				d.Notifications = append(d.Notifications, models.WorkspaceNotification{
+					ID:    nextNotificationID(d),
+					Icon:  "contract",
+					Title: fmt.Sprintf("Contract %s status: %s", no, status),
+					Meta:  env.Time,
+					Body:  fmt.Sprintf("%s — %s → %s", name, previousStatus, status),
+				})
+			}
+			models.AppendAudit(d, "contracts", "contracts.contract.status_changed",
+				fmt.Sprintf("Contract %s (%s): %s → %s", no, name, previousStatus, status), nil)
+			return nil
+		}); err != nil {
+			slog.Warn("contract status consumer: mutate failed", "owner", ws.OwnerUserID, "err", err)
+		}
+	}
+	return nil
+}
+
+// handleAssistanceRequested adds a notification to workspaces whose Members
+// include the requestor (`from`). This is the most signal-rich contract event
+// — it implies someone needs another team's involvement, so a UI nudge helps.
+func (h *Handler) handleAssistanceRequested(ctx context.Context, env platformevents.Envelope) error {
+	from := strings.ToLower(stringField(env.Data, "from"))
+	if from == "" {
+		return nil
+	}
+	text := stringField(env.Data, "text")
+	at := stringField(env.Data, "at")
+	if at == "" {
+		at = env.Time
+	}
+
+	list, err := h.Repo.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ws := range list {
+		var doc models.Document
+		if err := json.Unmarshal(ws.Document, &doc); err != nil {
+			continue
+		}
+		if !workspaceHasMember(&doc, from) {
+			continue
+		}
+		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			d.Notifications = append(d.Notifications, models.WorkspaceNotification{
+				ID:      nextNotificationID(d),
+				Icon:    "help-circle",
+				Title:   "Assistance requested",
+				Meta:    at,
+				Body:    text,
+				Mention: true,
+			})
+			models.AppendAudit(d, "contracts", "contracts.assistance.requested",
+				fmt.Sprintf("Assistance requested by %s", from), nil)
+			return nil
+		}); err != nil {
+			slog.Warn("assistance-requested consumer: mutate failed", "owner", ws.OwnerUserID, "err", err)
+		}
+	}
+	return nil
+}
+
 // handleMilestoneDueSoon adds a workspace notification to every workspace whose
 // Members include the milestone owner. Owner is matched by Member.Initials or
 // Member.Name; matching is case-insensitive.
@@ -160,10 +299,10 @@ func (h *Handler) handleMilestoneDueSoon(ctx context.Context, env platformevents
 }
 
 // handleUserDeactivated marks the user inactive in every workspace where they
-// appear as a Member and clears them from task assignments. Match strategy:
-// Email (if Member.Email present), then Name, then Initials — all
-// case-insensitive. Workspace mutations are best-effort; per-workspace failures
-// log but do not fail the consumer (so one bad workspace can't block the bus).
+// appear as a Member and clears them from task assignments. Match strategy
+// (in order, case-insensitive): UserID (canonical), Email, Name, Initials.
+// Workspace mutations are best-effort; per-workspace failures log but do not
+// fail the consumer (so one bad workspace can't block the bus).
 func (h *Handler) handleUserDeactivated(ctx context.Context, env platformevents.Envelope) error {
 	userID := stringField(env.Data, "userId")
 	email := stringField(env.Data, "email")
@@ -182,7 +321,7 @@ func (h *Handler) handleUserDeactivated(ctx context.Context, env platformevents.
 	}
 	for _, ws := range list {
 		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
-			applyUserDeactivation(d, email, fullName, actor)
+			applyUserDeactivation(d, userID, email, fullName, actor)
 			return nil
 		}); err != nil {
 			slog.Warn("user-deactivated consumer: mutate failed", "owner", ws.OwnerUserID, "err", err)
@@ -191,18 +330,78 @@ func (h *Handler) handleUserDeactivated(ctx context.Context, env platformevents.
 	return nil
 }
 
+// handleUserReactivated is the symmetric counterpart to handleUserDeactivated:
+// when auth re-enables a user, flip Member.Active back to true. Task
+// assignments are not restored — once unassigned, the workspace owner must
+// re-assign manually (we can't know what the prior assignment was, and the
+// task may have been picked up by someone else in the interim).
+func (h *Handler) handleUserReactivated(ctx context.Context, env platformevents.Envelope) error {
+	userID := stringField(env.Data, "userId")
+	email := stringField(env.Data, "email")
+	fullName := stringField(env.Data, "fullName")
+	if userID == "" && email == "" && fullName == "" {
+		return platformevents.Permanent(fmt.Errorf("user.reactivated event missing userId, email, and fullName"))
+	}
+	actor := stringField(env.Data, "actor")
+	if actor == "" {
+		actor = "auth"
+	}
+	list, err := h.Repo.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ws := range list {
+		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			applyUserReactivation(d, userID, email, fullName, actor)
+			return nil
+		}); err != nil {
+			slog.Warn("user-reactivated consumer: mutate failed", "owner", ws.OwnerUserID, "err", err)
+		}
+	}
+	return nil
+}
+
+func applyUserReactivation(d *models.Document, userID, email, fullName, actor string) {
+	userIDLower := strings.ToLower(strings.TrimSpace(userID))
+	emailLower := strings.ToLower(strings.TrimSpace(email))
+	nameLower := strings.ToLower(strings.TrimSpace(fullName))
+	changed := false
+	for i := range d.Members {
+		m := &d.Members[i]
+		if !memberMatches(m, userIDLower, emailLower, nameLower) {
+			continue
+		}
+		if m.Active == nil || *m.Active {
+			continue // already active
+		}
+		on := true
+		m.Active = &on
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	subject := email
+	if subject == "" {
+		subject = fullName
+	}
+	models.AppendAudit(d, actor, "auth.user.reactivated",
+		fmt.Sprintf("Reactivated %s", subject), nil)
+}
+
 // applyUserDeactivation mutates a workspace document in place: flips Member.Active
 // false for the deactivated user, clears their assignments from open tasks, and
 // appends a single audit entry summarising the change. Idempotent — re-running
 // produces no new mutations.
-func applyUserDeactivation(d *models.Document, email, fullName, actor string) {
+func applyUserDeactivation(d *models.Document, userID, email, fullName, actor string) {
+	userIDLower := strings.ToLower(strings.TrimSpace(userID))
 	emailLower := strings.ToLower(strings.TrimSpace(email))
 	nameLower := strings.ToLower(strings.TrimSpace(fullName))
 	matchedAny := false
 
 	for i := range d.Members {
 		m := &d.Members[i]
-		if !memberMatches(m, emailLower, nameLower) {
+		if !memberMatches(m, userIDLower, emailLower, nameLower) {
 			continue
 		}
 		if m.Active != nil && !*m.Active {
@@ -223,7 +422,8 @@ func applyUserDeactivation(d *models.Document, email, fullName, actor string) {
 			continue
 		}
 		assigneeLower := strings.ToLower(strings.TrimSpace(t.Assignee))
-		if (emailLower != "" && assigneeLower == emailLower) ||
+		if (userIDLower != "" && assigneeLower == userIDLower) ||
+			(emailLower != "" && assigneeLower == emailLower) ||
 			(nameLower != "" && assigneeLower == nameLower) {
 			t.Assignee = ""
 			cleared++
@@ -237,11 +437,21 @@ func applyUserDeactivation(d *models.Document, email, fullName, actor string) {
 	if subject == "" {
 		subject = fullName
 	}
+	if subject == "" {
+		subject = userID
+	}
 	models.AppendAudit(d, actor, "auth.user.deactivated",
 		fmt.Sprintf("Deactivated %s — cleared %d task assignment(s)", subject, cleared), nil)
 }
 
-func memberMatches(m *models.Member, emailLower, nameLower string) bool {
+// memberMatches matches a member against any of three identifiers (case-
+// insensitive). UserID is the canonical match — set by addMember when a new
+// user is invited. Email and name are fallbacks for legacy members whose
+// records predate the UserID field.
+func memberMatches(m *models.Member, userIDLower, emailLower, nameLower string) bool {
+	if userIDLower != "" && strings.EqualFold(strings.TrimSpace(m.UserID), userIDLower) {
+		return true
+	}
 	if emailLower != "" && strings.EqualFold(strings.TrimSpace(m.Email), emailLower) {
 		return true
 	}
