@@ -1,3 +1,7 @@
+// Package middleware implements Bearer+aud authentication for inbound
+// requests. The gateway-header trust path (X-IAG-* + GATEWAY_INTERNAL_SECRET)
+// has been removed — every request must carry a verifiable JWT with
+// aud=iag.project-management.
 package middleware
 
 import (
@@ -12,35 +16,16 @@ import (
 	"github.com/iag/project-management/backend/internal/ctxkeys"
 )
 
-const (
-	HeaderUserID        = "X-IAG-User-Id"
-	HeaderEmail         = "X-IAG-Email"
-	HeaderGroups        = "X-IAG-Groups"
-	HeaderRoles         = "X-IAG-Roles"
-	HeaderPermissions   = "X-IAG-Permissions"
-	HeaderIsSuperuser   = "X-IAG-Is-Superuser"
-	HeaderIsStaff       = "X-IAG-Is-Staff"
-	HeaderGatewaySecret = "X-IAG-Gateway-Secret"
-)
-
 type PlatformAuth struct {
-	authMode      string
-	gatewaySecret string
-	verifier      *authclient.Verifier
+	verifier *authclient.Verifier
 }
 
 type PlatformAuthOptions struct {
-	Mode          string
-	GatewaySecret string
-	Verifier      *authclient.Verifier
+	Verifier *authclient.Verifier
 }
 
 func NewPlatformAuth(opts PlatformAuthOptions) *PlatformAuth {
-	return &PlatformAuth{
-		authMode:      opts.Mode,
-		gatewaySecret: opts.GatewaySecret,
-		verifier:      opts.Verifier,
-	}
+	return &PlatformAuth{verifier: opts.Verifier}
 }
 
 func isPublicProbePath(path string) bool {
@@ -52,20 +37,31 @@ func isPublicProbePath(path string) bool {
 	}
 }
 
+// AttachPrincipal validates a Bearer token (if present) and pins the claims +
+// user UUID onto the Gin context. It does NOT enforce authentication — pair
+// with RequireAuth on routes that must reject unauthenticated callers.
 func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublicProbePath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
-		switch m.authMode {
-		case "gateway":
-			m.fromGateway(c)
-		case "jwt":
-			m.fromJWT(c)
-		default:
-			c.Next()
+		if m.verifier == nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "jwt verifier not configured"})
+			return
 		}
+		tokenStr := bearerToken(c)
+		if tokenStr == "" {
+			c.Next()
+			return
+		}
+		claims, userID, err := m.verifier.Verify(tokenStr)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		setPrincipal(c, userID, claims, claims.Permissions)
+		c.Next()
 	}
 }
 
@@ -79,59 +75,7 @@ func (m *PlatformAuth) RequireAuth() gin.HandlerFunc {
 	}
 }
 
-func (m *PlatformAuth) fromGateway(c *gin.Context) {
-	if m.gatewaySecret != "" && c.GetHeader(HeaderGatewaySecret) != m.gatewaySecret {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-	sub := c.GetHeader(HeaderUserID)
-	if sub == "" {
-		c.Next()
-		return
-	}
-	userID, err := uuid.Parse(sub)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user id"})
-		return
-	}
-	groups := splitHeaderList(c.GetHeader(HeaderGroups))
-	if len(groups) == 0 {
-		groups = splitHeaderList(c.GetHeader(HeaderRoles))
-	}
-	perms := splitHeaderList(c.GetHeader(HeaderPermissions))
-	claims := &authclient.Claims{
-		Email:       c.GetHeader(HeaderEmail),
-		IsSuperuser: strings.EqualFold(c.GetHeader(HeaderIsSuperuser), "true"),
-		IsStaff:     strings.EqualFold(c.GetHeader(HeaderIsStaff), "true"),
-		Groups:      groups,
-		Roles:       groups,
-		Permissions: perms,
-	}
-	claims.Subject = sub
-	setPrincipal(c, userID, claims, perms)
-	c.Next()
-}
-
-func (m *PlatformAuth) fromJWT(c *gin.Context) {
-	if m.verifier == nil {
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "jwt verifier not configured"})
-		return
-	}
-	tokenStr := bearerToken(c)
-	if tokenStr == "" {
-		c.Next()
-		return
-	}
-	claims, userID, err := m.verifier.Verify(tokenStr)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-		return
-	}
-	setPrincipal(c, userID, claims, claims.Permissions)
-	c.Next()
-}
-
-// VerifyBearerToken validates a raw JWT (WebSocket query param).
+// VerifyBearerToken validates a raw JWT (e.g. from a WebSocket query param).
 func (m *PlatformAuth) VerifyBearerToken(tokenStr string) (uuid.UUID, *authclient.Claims, error) {
 	if m.verifier == nil {
 		return uuid.Nil, nil, fmt.Errorf("jwt verifier not configured")
@@ -185,18 +129,4 @@ func Permissions(c *gin.Context) []string {
 	}
 	list, _ := v.([]string)
 	return list
-}
-
-func splitHeaderList(value string) []string {
-	if value == "" {
-		return nil
-	}
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if trimmed := strings.TrimSpace(p); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
 }

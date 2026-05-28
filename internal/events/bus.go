@@ -23,6 +23,10 @@ const (
 	TopicCommercial = "iag.commercial"
 
 	// Domain event types emitted by PM on iag.commercial.
+	//
+	// pm.requisition.submitted carries workspaceOwnerUserId so downstream
+	// services (procurement) can echo it back on approval/rejection, letting
+	// PM find the originating workspace without a global requisition index.
 	TypePMAlertRaised        = "pm.alert.raised"
 	TypeRequisitionSubmitted = "pm.requisition.submitted"
 	TypeTaskAssigned         = "pm.task.assigned"

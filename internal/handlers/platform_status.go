@@ -29,7 +29,7 @@ func (p *PlatformStatus) status(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"service":          "iag-project-management",
-		"authMode":         p.Cfg.AuthMode,
+		"audience":         p.Cfg.Audience,
 		"publicApiUrl":     p.Cfg.PublicAPIURL,
 		"gatewayApiPrefix": p.Cfg.GatewayAPIPrefix,
 		"databaseOk":       dbOK,

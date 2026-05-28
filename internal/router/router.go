@@ -33,6 +33,7 @@ func New(opts Options) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(requestTimeout(getRequestTimeout()))
 	r.Use(corsMiddleware(opts.Cfg.CORSOrigin))
 	r.Use(securityHeaders())
 

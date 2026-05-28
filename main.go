@@ -16,20 +16,28 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/alvor-technologies/iag-authclient"
+	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 	pmdb "github.com/iag/project-management/backend/db"
 	"github.com/iag/project-management/backend/internal/config"
 	pgdb "github.com/iag/project-management/backend/internal/db"
+	pmconsumer "github.com/iag/project-management/backend/internal/consumer"
 	"github.com/iag/project-management/backend/internal/events"
 	"github.com/iag/project-management/backend/internal/files"
+	"github.com/iag/project-management/backend/internal/jobs"
 	"github.com/iag/project-management/backend/internal/migrate"
 	"github.com/iag/project-management/backend/internal/middleware"
+	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/realtime"
 	"github.com/iag/project-management/backend/internal/router"
 	"github.com/iag/project-management/backend/internal/store"
+	"github.com/iag/project-management/backend/internal/workspace"
 )
 
 func main() {
 	configureLogger()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -81,24 +89,25 @@ func main() {
 		}
 	}
 
-	var verifier *authclient.Verifier
-	if cfg.AuthMode == "jwt" {
-		verifier = authclient.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer)
-		initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := verifier.Refresh(initCtx); err != nil {
-			cancel()
-			slog.Error("jwks refresh", "err", err)
-			os.Exit(1)
-		}
-		cancel()
-		go jwksRefreshLoop(verifier)
+	verifier := authclient.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.Audience)
+	initCtx, refreshCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := verifier.Refresh(initCtx); err != nil {
+		refreshCancel()
+		slog.Error("jwks refresh", "err", err)
+		os.Exit(1)
 	}
+	refreshCancel()
+	go jwksRefreshLoop(ctx, verifier)
 
 	platformAuth := middleware.NewPlatformAuth(middleware.PlatformAuthOptions{
-		Mode:          cfg.AuthMode,
-		GatewaySecret: cfg.GatewaySecret,
-		Verifier:      verifier,
+		Verifier: verifier,
 	})
+
+	if cfg.ServiceClientSecret != "" {
+		go registerPermissionsLoop(ctx, cfg)
+	} else {
+		slog.Warn("SERVICE_CLIENT_SECRET unset — skipping permissions registration")
+	}
 
 	eventBus := events.New(events.Config{
 		Brokers: cfg.KafkaBrokers,
@@ -107,6 +116,32 @@ func main() {
 	defer func() { _ = eventBus.Close() }()
 	if eventBus.Enabled() {
 		slog.Info("event bus enabled", "brokers", cfg.KafkaBrokers)
+	}
+
+	go remindersLoop(ctx, repo, eventBus, cfg.RemindersInterval)
+	go archiveLoop(ctx, repo, cfg.ArchiveInterval)
+
+	if cfg.ConsumerEnabled {
+		wsSvc := &workspace.Service{Repo: repo, Hub: hub, Redis: redisBridge, Events: eventBus}
+		consumer, closeDLQ, err := pmconsumer.New(pmconsumer.Options{
+			Brokers:  cfg.KafkaBrokers,
+			GroupID:  cfg.ConsumerGroupID,
+			DLQTopic: cfg.ConsumerDLQTopic,
+			Pool:     pool,
+			Handler:  &pmconsumer.Handler{Svc: wsSvc, Repo: repo},
+		})
+		if err != nil {
+			slog.Error("consumer init", "err", err)
+			os.Exit(1)
+		}
+		defer closeDLQ()
+		defer func() { _ = consumer.Close() }()
+		go func() {
+			if err := consumer.Run(ctx); err != nil {
+				slog.Warn("consumer stopped", "err", err)
+			}
+		}()
+		slog.Info("commercial consumer enabled", "group", cfg.ConsumerGroupID, "dlq", cfg.ConsumerDLQTopic)
 	}
 
 	fileStore := files.NewStore(pool, cfg.UploadDir)
@@ -131,7 +166,7 @@ func main() {
 
 	listenErr := make(chan error, 1)
 	go func() {
-		slog.Info("API listening", "addr", cfg.Addr, "authMode", cfg.AuthMode)
+		slog.Info("API listening", "addr", cfg.Addr, "audience", cfg.Audience)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			listenErr <- err
 		}
@@ -151,6 +186,48 @@ func main() {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelShutdown()
 	_ = srv.Shutdown(shutdownCtx)
+	cancel()
+}
+
+func registerPermissionsLoop(ctx context.Context, cfg config.Config) {
+	saClient := platformserviceauth.NewClient(platformserviceauth.Options{
+		TokenURL:     cfg.AuthTokenURL,
+		ClientID:     cfg.ServiceClientID,
+		ClientSecret: cfg.ServiceClientSecret,
+		Audience:     "iag.authentication",
+	})
+	descriptors := models.PermissionDescriptors()
+	perms := make([]platformserviceauth.Permission, 0, len(descriptors))
+	for _, d := range descriptors {
+		perms = append(perms, platformserviceauth.Permission{
+			Name:        d.Name,
+			Description: d.Description,
+		})
+	}
+
+	backoff := time.Second
+	const maxBackoff = 5 * time.Minute
+	for {
+		regCtx, c := context.WithTimeout(ctx, 10*time.Second)
+		err := platformserviceauth.RegisterPermissions(regCtx, saClient, cfg.JWTIssuer, "project-management", perms)
+		c()
+		if err == nil {
+			slog.Info("permissions registered with auth service")
+			return
+		}
+		slog.Warn("permissions registration failed; retrying", "err", err, "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
 }
 
 func configureLogger() {
@@ -167,11 +244,70 @@ func configureLogger() {
 	slog.SetDefault(slog.New(handler))
 }
 
-func jwksRefreshLoop(v *authclient.Verifier) {
+func jwksRefreshLoop(ctx context.Context, v *authclient.Verifier) {
 	ticker := time.NewTicker(5 * time.Minute)
-	for range ticker.C {
-		if err := v.Refresh(context.Background()); err != nil {
-			slog.Warn("jwks refresh", "err", err)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := v.Refresh(refreshCtx); err != nil {
+				slog.Warn("jwks refresh", "err", err)
+			}
+			cancel()
+		}
+	}
+}
+
+// archiveLoop runs jobs.RunArchive on the configured interval until ctx is
+// cancelled. interval<=0 disables the loop. Bounded by a 10-minute per-tick
+// timeout (archive scans every workspace, so slower than reminders).
+func archiveLoop(ctx context.Context, repo *store.Repository, interval time.Duration) {
+	if interval <= 0 {
+		slog.Info("archive loop disabled (interval <= 0)")
+		return
+	}
+	slog.Info("archive loop started", "interval", interval)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	cfg := jobs.DefaultArchiveConfig()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			jobCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			if _, err := jobs.RunArchive(jobCtx, repo, cfg); err != nil {
+				slog.Warn("archive loop", "err", err)
+			}
+			cancel()
+		}
+	}
+}
+
+// remindersLoop runs jobs.RunReminders on the configured interval until ctx is
+// cancelled. interval<=0 disables the loop. Each tick is bounded by a 5-minute
+// timeout so a slow run cannot block shutdown indefinitely.
+func remindersLoop(ctx context.Context, repo *store.Repository, bus *events.Bus, interval time.Duration) {
+	if interval <= 0 {
+		slog.Info("reminders loop disabled (interval <= 0)")
+		return
+	}
+	slog.Info("reminders loop started", "interval", interval)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			jobCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			if _, err := jobs.RunReminders(jobCtx, repo, bus); err != nil {
+				slog.Warn("reminders loop", "err", err)
+			}
+			cancel()
 		}
 	}
 }

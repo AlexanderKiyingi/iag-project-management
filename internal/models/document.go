@@ -195,6 +195,7 @@ type TaskCustomFieldDef struct {
 type Member struct {
 	Initials   string  `json:"initials"`
 	Name       string  `json:"name"`
+	Email      string  `json:"email,omitempty"`
 	Role       string  `json:"role"`
 	AccessRole string  `json:"accessRole"`
 	Color      string  `json:"color"`
@@ -202,4 +203,5 @@ type Member struct {
 	Wl         int     `json:"wl"`
 	Team       string  `json:"team"`
 	Manager    *string `json:"manager"`
+	Active     *bool   `json:"active,omitempty"`
 }

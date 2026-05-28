@@ -170,12 +170,7 @@ func (h *Entities) createTask(c *gin.Context) {
 		if claims != nil {
 			email = claims.Email
 		}
-		h.Svc.Events.PublishCommercial(c.Request.Context(), events.TypeTaskAssigned, map[string]any{
-			"taskId":   strconv.Itoa(created.ID),
-			"assignee": in.Assignee,
-			"actor":    actor,
-			"email":    email,
-		}, strconv.Itoa(created.ID))
+		publishTaskAssigned(c.Request.Context(), h.Svc.Events, created, actor, email)
 	}
 	c.JSON(http.StatusOK, gin.H{"task": created, "version": ws.Version})
 }
@@ -191,16 +186,41 @@ func (h *Entities) patchTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	mutate(c, h.Svc, func(d *models.Document) error {
+	actor := c.GetHeader("X-Workspace-User")
+	var prevAssignee string
+	var updated models.Task
+	uid, ok := userID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
 		for i := range d.Tasks {
 			if d.Tasks[i].ID != id {
 				continue
 			}
+			prevAssignee = d.Tasks[i].Assignee
 			applyTaskPatch(&d.Tasks[i], patch)
+			updated = d.Tasks[i]
 			return nil
 		}
 		return fmt.Errorf("task not found")
 	})
+	if err != nil {
+		writeMutationError(c, err)
+		return
+	}
+	if h.Svc.Events != nil && h.Svc.Events.Enabled() &&
+		strings.TrimSpace(updated.Assignee) != "" &&
+		updated.Assignee != prevAssignee {
+		claims, _ := middleware.PlatformClaims(c)
+		email := ""
+		if claims != nil {
+			email = claims.Email
+		}
+		publishTaskAssigned(c.Request.Context(), h.Svc.Events, updated, actor, email)
+	}
+	respondWorkspace(c, ws)
 }
 
 func applyTaskPatch(t *models.Task, patch map[string]any) {
@@ -384,15 +404,29 @@ func (h *Entities) addTaskComment(c *gin.Context) {
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
-	mutate(c, h.Svc, func(d *models.Document) error {
+	parsedMentions := mentions.Parse(body.Text)
+	uid, ok := userID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
 		cmt := models.TaskComment{
 			TaskID: taskID, Author: actor, Text: body.Text,
-			Mentions: mentions.Parse(body.Text), Time: models.ISONow(),
+			Mentions: parsedMentions, Time: models.ISONow(),
 		}
 		cmt.ID = models.NextCommentID(d)
 		d.TaskComments = append(d.TaskComments, cmt)
 		return nil
 	})
+	if err != nil {
+		writeMutationError(c, err)
+		return
+	}
+	if len(parsedMentions) > 0 && h.Svc.Events != nil && h.Svc.Events.Enabled() {
+		publishMentions(c.Request.Context(), h.Svc.Events, parsedMentions, actor, body.Text, "task_comment", strconv.Itoa(taskID))
+	}
+	respondWorkspace(c, ws)
 }
 
 func (h *Entities) deleteTaskComment(c *gin.Context) {
@@ -656,7 +690,14 @@ func (h *Entities) postMessage(c *gin.Context) {
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
-	mutate(c, h.Svc, func(d *models.Document) error {
+	parsedMentions := mentions.Parse(body.Text)
+	uid, ok := userID(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	var messageID int
+	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
 		msg := models.Message{
 			ChatID: body.ChatID, Author: actor, Text: body.Text,
 			ReplyTo: body.ReplyTo, Edited: body.Edited, Deleted: body.Deleted,
@@ -664,9 +705,18 @@ func (h *Entities) postMessage(c *gin.Context) {
 			Attachments: body.Attachments, ReminderAt: body.ReminderAt, Time: models.ISONow(),
 		}
 		msg.ID = models.NextMessageID(d)
+		messageID = msg.ID
 		d.Messages = append(d.Messages, msg)
 		return nil
 	})
+	if err != nil {
+		writeMutationError(c, err)
+		return
+	}
+	if len(parsedMentions) > 0 && h.Svc.Events != nil && h.Svc.Events.Enabled() {
+		publishMentions(c.Request.Context(), h.Svc.Events, parsedMentions, actor, body.Text, "chat_message", strconv.Itoa(messageID))
+	}
+	respondWorkspace(c, ws)
 }
 
 func (h *Entities) createFile(c *gin.Context) {
@@ -784,16 +834,17 @@ func (h *Entities) createRequisition(c *gin.Context) {
 	}
 	if h.Svc.Events != nil && h.Svc.Events.Enabled() {
 		h.Svc.Events.PublishCommercial(c.Request.Context(), events.TypeRequisitionSubmitted, map[string]any{
-			"requisitionId":  strconv.Itoa(created.ID),
-			"title":          created.Title,
-			"amount":         fmt.Sprintf("%.2f", created.Amount),
-			"currency":       created.Currency,
-			"status":         created.Status,
-			"requestedBy":    created.RequestedBy,
-			"forDept":        created.ForDept,
-			"urgency":        created.Urgency,
-			"payee":          created.Payee,
-			"justification":  created.Justification,
+			"requisitionId":        strconv.Itoa(created.ID),
+			"workspaceOwnerUserId": uid,
+			"title":                created.Title,
+			"amount":               fmt.Sprintf("%.2f", created.Amount),
+			"currency":             created.Currency,
+			"status":               created.Status,
+			"requestedBy":          created.RequestedBy,
+			"forDept":              created.ForDept,
+			"urgency":              created.Urgency,
+			"payee":                created.Payee,
+			"justification":        created.Justification,
 		}, strconv.Itoa(created.ID))
 		claims, _ := middleware.PlatformClaims(c)
 		if claims != nil && claims.Email != "" {

@@ -95,3 +95,25 @@ func (r *Repository) Update(ctx context.Context, ownerUserID string, document js
 func (r *Repository) Ping(ctx context.Context) error {
 	return r.pool.Ping(ctx)
 }
+
+// ListWorkspaces returns every persisted workspace (used by scheduled reminder jobs).
+func (r *Repository) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, owner_user_id, document, version
+		FROM pm_workspaces
+		ORDER BY owner_user_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Workspace
+	for rows.Next() {
+		var ws Workspace
+		if err := rows.Scan(&ws.ID, &ws.OwnerUserID, &ws.Document, &ws.Version); err != nil {
+			return nil, err
+		}
+		out = append(out, ws)
+	}
+	return out, rows.Err()
+}

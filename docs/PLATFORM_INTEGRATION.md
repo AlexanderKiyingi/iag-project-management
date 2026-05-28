@@ -6,10 +6,10 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 
 | Service | Integration |
 |---------|-------------|
-| **iag-authentication** | Gateway JWT → `X-IAG-*` headers; optional `AUTH_MODE=jwt` for local dev |
+| **iag-authentication** | Gateway JWT → `X-IAG-*` headers; optional `AUTH_MODE=jwt` for local dev; registers `pm.*` permissions at startup |
 | **iag-api-gateway** | Public ingress at `/api/v1/project-management/api/v1/...` |
 | **Redis** | WebSocket fan-out across replicas (`REDIS_URL`) |
-| **iag-notifications** | (Phase 2) Kafka `notification.requested` |
+| **iag-notifications** | Subscribes to `iag.commercial` for `pm.alert.raised`, `pm.task.assigned`, and `pm.mention.created` |
 
 ## Environment
 
@@ -18,10 +18,13 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 | `ADDR` | Listen address (default `:4102`) |
 | `DATABASE_URL` | Postgres (`iag_pm`) |
 | `REDIS_URL` | Optional WS pub/sub |
-| `AUTH_MODE` | `gateway` or `jwt` |
-| `GATEWAY_INTERNAL_SECRET` | Shared with api-gateway |
+| `JWT_ISSUER` / `JWKS_URL` | Auth service URLs for Bearer verification |
+| `AUDIENCE` | Required aud claim on inbound tokens (default `iag.project-management`) |
+| `SERVICE_CLIENT_ID` / `SERVICE_CLIENT_SECRET` / `AUTH_TOKEN_URL` | Service-account credentials for outbound calls + permission registration |
 | `PUBLIC_API_URL` | Gateway origin for status |
 | `GATEWAY_API_PREFIX` | `/api/v1/project-management` |
+| `NOTIFY_DEFAULT_RECIPIENT` | Optional inbox for task/mention/reminder emails via notifications |
+| `TASK_DUE_REMINDER_DAYS` | Jobs: tasks due within N days (default `7`) |
 
 ## API
 
@@ -39,10 +42,22 @@ Send `X-Workspace-User` (initials) on mutating requests for audit attribution.
 
 ## Events (Kafka)
 
-| Topic | Type |
-|-------|------|
-| `iag.commercial` | `pm.requisition.submitted`, `pm.task.assigned`, `pm.mention.created` |
-| `iag.notifications` | `notification.requested` (requisition emails) |
+| Topic | Type | Notes |
+|-------|------|-------|
+| `iag.commercial` | `pm.requisition.submitted` | Consumed by **iag-procurement** |
+| `iag.commercial` | `pm.task.assigned` | Emitted on create and assignee patch; notifications when `NOTIFY_DEFAULT_RECIPIENT` set |
+| `iag.commercial` | `pm.mention.created` | Emitted from task comments and chat messages with `@mentions` |
+| `iag.commercial` | `pm.alert.raised` | Requisition submit + scheduled reminder jobs (`pm.requisition.submitted`, `pm.message.reminder`, `pm.task.due_soon`) |
+
+## Scheduled jobs
+
+```bash
+DATABASE_URL=... EVENT_BUS_ENABLED=true KAFKA_BROKERS=localhost:19092 \
+  NOTIFY_DEFAULT_RECIPIENT=ops@iag.local \
+  go run ./cmd/jobs --reminders
+```
+
+Docker Compose runs this as the `project-management-jobs` one-shot service after the API is healthy.
 
 ## Local development
 
