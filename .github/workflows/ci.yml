@@ -57,8 +57,10 @@ jobs:
         env:
           DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=iag_pm
 
-# Note: docker build is intentionally not in inner CI — the Dockerfile's go.mod
-# replace points at ../../../shared/platform-go which only resolves inside the
-# umbrella checkout. The umbrella workflow .github/workflows/project-management.yml
-# handles the image build. Converting to a dual-target Dockerfile would let this
-# job build standalone too.
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image (standalone target)
+        run: docker build --target standalone -t iag-project-management:ci .
