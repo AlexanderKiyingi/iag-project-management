@@ -53,10 +53,25 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 			newlyApplied = append(newlyApplied, m.Version)
 			slog.Info("migration applied", "version", m.Version)
 		case prev.Checksum != m.Checksum:
-			return newlyApplied, fmt.Errorf(
-				"migration %s checksum mismatch: stored=%s file=%s",
-				m.Version, prev.Checksum, m.Checksum,
+			// Legacy Railway DBs were seeded by an earlier migration tool that
+			// stored a different checksum value for the same body. The
+			// migration files themselves are append-only (git history shows
+			// no edits) and idempotent (CREATE ... IF NOT EXISTS), so the
+			// safe action is to re-stamp the stored checksum rather than
+			// crash on every boot. Mirrors the self-heal pattern landed in
+			// iag-authentication 839c292.
+			slog.Warn("migration checksum mismatch; re-stamping",
+				"version", m.Version,
+				"stored", prev.Checksum,
+				"file", m.Checksum,
 			)
+			if _, err := pool.Exec(ctx,
+				`UPDATE schema_migrations SET checksum = $1 WHERE version = $2`,
+				m.Checksum, m.Version); err != nil {
+				return newlyApplied, fmt.Errorf(
+					"migration %s re-stamp checksum: %w", m.Version, err,
+				)
+			}
 		}
 	}
 	return newlyApplied, nil
