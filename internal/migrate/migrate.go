@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -132,7 +133,12 @@ func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, m.Body); err != nil {
+	// QueryExecModeSimpleProtocol so multi-statement bodies execute in
+	// full. pgx's default extended protocol parses only the first
+	// statement of a multi-statement Exec, which is how Railway ended up
+	// with 0001 recorded as applied but pm_workspaces missing. Mirrors
+	// the fix landed in iag-authentication 839c292.
+	if _, err := tx.Exec(ctx, m.Body, pgx.QueryExecModeSimpleProtocol); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,

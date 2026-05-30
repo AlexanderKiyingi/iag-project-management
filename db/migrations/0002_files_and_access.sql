@@ -1,4 +1,19 @@
-BEGIN;
+-- Self-heal: legacy Railway DBs have 0001 recorded in schema_migrations
+-- but pm_workspaces does not exist because pgx's default extended
+-- protocol parsed only the first statement of 0001's multi-statement
+-- body (see migrate.go switch to QueryExecModeSimpleProtocol). On
+-- healthy DBs these are no-ops.
+CREATE TABLE IF NOT EXISTS pm_workspaces (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_user_id   TEXT NOT NULL,
+    document        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version         BIGINT NOT NULL DEFAULT 1,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT pm_workspaces_owner_user_id_key UNIQUE (owner_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS pm_workspaces_owner_user_id_idx ON pm_workspaces (owner_user_id);
 
 ALTER TABLE pm_workspaces
     ADD COLUMN IF NOT EXISTS org_id TEXT;
@@ -27,5 +42,3 @@ CREATE TABLE IF NOT EXISTS pm_file_blobs (
 );
 
 CREATE INDEX IF NOT EXISTS pm_file_blobs_workspace_id_idx ON pm_file_blobs (workspace_id);
-
-COMMIT;

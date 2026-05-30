@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS pm_workspaces (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_user_id   TEXT NOT NULL,
@@ -11,5 +9,3 @@ CREATE TABLE IF NOT EXISTS pm_workspaces (
 );
 
 CREATE INDEX IF NOT EXISTS pm_workspaces_owner_user_id_idx ON pm_workspaces (owner_user_id);
-
-COMMIT;
