@@ -119,8 +119,19 @@ func originAllowed(origin string, allowed []string) bool {
 
 func securityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// JSON-only API: strictest CSP — nothing loads, nothing frames.
+		c.Header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=(), interest-cohort=()")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		// HSTS only over TLS so local dev (http://localhost) doesn't lock
+		// the browser into HTTPS for the dev domain. Behind Railway/nginx
+		// the request arrives as plaintext with X-Forwarded-Proto=https.
+		if c.Request.TLS != nil || strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+		}
 		c.Next()
 	}
 }
