@@ -65,11 +65,15 @@ RUN set -eu; \
 FROM gcr.io/distroless/static-debian12:nonroot AS monorepo
 WORKDIR /app
 COPY --from=build-monorepo /out/ /app/
-ENV PORT=4102 \
-    AUTO_MIGRATE=true \
+# Intentionally no ENV PORT / EXPOSE here: Railway injects its own PORT at
+# runtime and auto-detects EXPOSE to pick its proxy target port. Declaring a
+# different EXPOSE here causes Railway to forward to that port instead of
+# wherever the container actually bound, producing X-Railway-Fallback: true
+# 502s. Internal callers (docker-compose, local dev) use PM's Go-side fallback
+# of :4102 via internal/config/listen.go when PORT is unset.
+ENV AUTO_MIGRATE=true \
     LOG_FORMAT=json \
     GIN_MODE=release
-EXPOSE 4102
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
   CMD ["/app/healthcheck"]
 ENTRYPOINT ["/app/api"]
@@ -77,11 +81,15 @@ ENTRYPOINT ["/app/api"]
 FROM gcr.io/distroless/static-debian12:nonroot AS standalone
 WORKDIR /app
 COPY --from=build-standalone /out/ /app/
-ENV PORT=4102 \
-    AUTO_MIGRATE=true \
+# Intentionally no ENV PORT / EXPOSE here: Railway injects its own PORT at
+# runtime and auto-detects EXPOSE to pick its proxy target port. Declaring a
+# different EXPOSE here causes Railway to forward to that port instead of
+# wherever the container actually bound, producing X-Railway-Fallback: true
+# 502s. Internal callers (docker-compose, local dev) use PM's Go-side fallback
+# of :4102 via internal/config/listen.go when PORT is unset.
+ENV AUTO_MIGRATE=true \
     LOG_FORMAT=json \
     GIN_MODE=release
-EXPOSE 4102
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
   CMD ["/app/healthcheck"]
 ENTRYPOINT ["/app/api"]
