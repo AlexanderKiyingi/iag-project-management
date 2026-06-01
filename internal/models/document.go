@@ -20,6 +20,10 @@ type Document struct {
 	EntityComments       []EntityComment        `json:"entityComments,omitempty"`
 	Templates            []Template             `json:"templates,omitempty"`
 	Rules                []Rule                 `json:"rules,omitempty"`
+	TimeEntries          []TimeEntry            `json:"timeEntries,omitempty"`
+	Portfolios           []Portfolio            `json:"portfolios,omitempty"`
+	Forms                []Form                 `json:"forms,omitempty"`
+	Webhooks             []WebhookSubscription  `json:"webhooks,omitempty"`
 	TaskCustomFieldDefs  []TaskCustomFieldDef   `json:"taskCustomFieldDefs"`
 	TaskListColumns      map[string]bool        `json:"taskListColumns"`
 	SidebarCollapsed     bool                   `json:"sidebarCollapsed"`
@@ -367,6 +371,73 @@ const (
 	OpContains = "contains"
 	OpIn       = "in"
 )
+
+// TimeEntry tracks one work session against a task. EndedAt is empty
+// while the timer is running; clients call /tasks/:id/time/stop to
+// close the entry. DurationSec is server-computed on stop so the
+// client doesn't have to.
+type TimeEntry struct {
+	ID          int    `json:"id"`
+	TaskID      int    `json:"taskId"`
+	UserID      string `json:"userId"`
+	StartedAt   string `json:"startedAt"`
+	EndedAt     string `json:"endedAt,omitempty"`
+	DurationSec int64  `json:"durationSec"`
+	Note        string `json:"note,omitempty"`
+}
+
+// Portfolio is a personal collection of project IDs with rollup stats
+// computed on read.
+type Portfolio struct {
+	ID          int      `json:"id"`
+	OwnerUserID string   `json:"ownerUserId"`
+	Name        string   `json:"name"`
+	ProjectIDs  []string `json:"projectIds"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
+}
+
+// Form is an intake form whose submission creates a Task in the
+// configured ProjectID. Public forms can be submitted without auth
+// via POST /public/forms/:slug.
+type Form struct {
+	ID          int         `json:"id"`
+	Slug        string      `json:"slug"`
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Fields      []FormField `json:"fields"`
+	ProjectID   string      `json:"projectId,omitempty"`
+	Public      bool        `json:"public"`
+	CreatedAt   string      `json:"createdAt"`
+	UpdatedAt   string      `json:"updatedAt"`
+}
+
+// FormField describes one form input. Type is one of: text, longtext,
+// number, date, select. Options applies to select.
+type FormField struct {
+	ID       string   `json:"id"`
+	Label    string   `json:"label"`
+	Type     string   `json:"type"`
+	Options  []string `json:"options,omitempty"`
+	Required bool     `json:"required,omitempty"`
+}
+
+// WebhookSubscription holds a user's request to be POSTed when given
+// event types occur. Secret is used to HMAC-sign the payload so the
+// receiver can verify authenticity. FailureCount lets the retry job
+// disable subscriptions that look dead.
+type WebhookSubscription struct {
+	ID            int      `json:"id"`
+	OwnerUserID   string   `json:"ownerUserId"`
+	URL           string   `json:"url"`
+	Secret        string   `json:"secret"`
+	Events        []string `json:"events"`
+	Active        bool     `json:"active"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
+	LastDelivered string   `json:"lastDelivered,omitempty"`
+	FailureCount  int      `json:"failureCount,omitempty"`
+}
 
 // Section is an ordered group of tasks within a project. The legacy
 // Task.Section string field is kept as a name mirror so existing

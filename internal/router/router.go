@@ -17,9 +17,11 @@ import (
 	"github.com/iag/project-management/backend/internal/files"
 	"github.com/iag/project-management/backend/internal/handlers"
 	"github.com/iag/project-management/backend/internal/middleware"
+	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/realtime"
 	"github.com/iag/project-management/backend/internal/search"
 	"github.com/iag/project-management/backend/internal/store"
+	"github.com/iag/project-management/backend/internal/webhooks"
 	"github.com/iag/project-management/backend/internal/workspace"
 )
 
@@ -34,6 +36,7 @@ type Options struct {
 	AuditRecorder audit.Recorder
 	Search        *search.Service
 	RuleNotify    automation.NotifyHook
+	Webhooks      *webhooks.Store
 }
 
 func New(opts Options) *gin.Engine {
@@ -58,6 +61,28 @@ func New(opts Options) *gin.Engine {
 	})
 	docs.Register(r)
 
+	// Public form intake — unauthenticated; mounted before the
+	// PlatformAuth middleware kicks in so external stakeholders can
+	// submit without a Bearer token.
+	pubForms := &handlers.PublicForms{
+		Repo: opts.Repo,
+		Svc: &workspace.Service{
+			Repo: opts.Repo, Hub: opts.Hub, Redis: opts.RedisBridge,
+			Events: opts.Events, Search: opts.Search, RuleNotify: opts.RuleNotify,
+		},
+	}
+	pubForms.Register(r)
+
+	// Public share-token endpoints — read-only views of single tasks
+	// and projects, gated by a JWT issued by iag-authentication with
+	// audience iag.share. JWKS fetched lazily from the auth service.
+	(&handlers.PublicShare{
+		Repo:     opts.Repo,
+		JWKSURL:  opts.Cfg.JWKSURL,
+		Issuer:   opts.Cfg.JWTIssuer,
+		Audience: "iag.share",
+	}).Register(r)
+
 	if opts.PlatformAuth != nil {
 		r.Use(opts.PlatformAuth.AttachPrincipal())
 	}
@@ -67,12 +92,13 @@ func New(opts Options) *gin.Engine {
 
 	api := r.Group("/api/v1")
 	svc := &workspace.Service{
-		Repo:       opts.Repo,
-		Hub:        opts.Hub,
-		Redis:      opts.RedisBridge,
-		Events:     opts.Events,
-		Search:     opts.Search,
-		RuleNotify: opts.RuleNotify,
+		Repo:            opts.Repo,
+		Hub:             opts.Hub,
+		Redis:           opts.RedisBridge,
+		Events:          opts.Events,
+		Search:          opts.Search,
+		RuleNotify:      opts.RuleNotify,
+		WebhookEnqueuer: webhookAdapter{store: opts.Webhooks},
 	}
 	(&handlers.Workspace{Svc: svc, Platform: opts.PlatformAuth}).Register(api)
 	(&handlers.Entities{Svc: svc, Files: opts.FileStore}).Register(api)
@@ -174,4 +200,23 @@ func getRequestTimeout() time.Duration {
 		return 30 * time.Second
 	}
 	return d
+}
+
+// webhookAdapter satisfies workspace.WebhookEnqueuer by wrapping the
+// concrete *webhooks.Store. Keeping the indirection lets the workspace
+// package stay free of webhook imports.
+type webhookAdapter struct {
+	store *webhooks.Store
+}
+
+func (a webhookAdapter) Enqueue(ctx context.Context, ownerUserID string, eventType string, payload any, subs []models.WebhookSubscription) error {
+	if a.store == nil {
+		return nil
+	}
+	return a.store.Enqueue(ctx, ownerUserID, webhooks.Event{
+		Type:      eventType,
+		Workspace: ownerUserID,
+		Time:      models.ISONow(),
+		Data:      payload,
+	}, subs)
 }

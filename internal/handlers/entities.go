@@ -55,6 +55,32 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.POST("/rules", authz, h.createRule)
 	rg.PATCH("/rules/:id", authz, h.patchRule)
 	rg.DELETE("/rules/:id", authz, h.deleteRule)
+
+	rg.POST("/tasks/:id/time/start", authz, h.startTimer)
+	rg.POST("/tasks/:id/time/stop", authz, h.stopTimer)
+	rg.GET("/tasks/:id/time", auth.RequireWorkspaceRead(), h.listTaskTime)
+	rg.GET("/users/:id/time", auth.RequireWorkspaceRead(), h.listUserTime)
+
+	rg.GET("/portfolios", auth.RequireWorkspaceRead(), h.listPortfolios)
+	rg.GET("/portfolios/:id", auth.RequireWorkspaceRead(), h.getPortfolio)
+	rg.POST("/portfolios", authz, h.createPortfolio)
+	rg.PATCH("/portfolios/:id", authz, h.patchPortfolio)
+	rg.DELETE("/portfolios/:id", authz, h.deletePortfolio)
+
+	rg.GET("/forms", auth.RequireWorkspaceRead(), h.listForms)
+	rg.POST("/forms", authz, h.createForm)
+	rg.PATCH("/forms/:id", authz, h.patchForm)
+	rg.DELETE("/forms/:id", authz, h.deleteForm)
+
+	rg.GET("/reports/workload", auth.RequireWorkspaceRead(), h.reportWorkload)
+	rg.GET("/reports/throughput", auth.RequireWorkspaceRead(), h.reportThroughput)
+	rg.GET("/reports/status-rollup", auth.RequireWorkspaceRead(), h.reportStatusRollup)
+	rg.GET("/reports/burndown/:id", auth.RequireWorkspaceRead(), h.reportBurndown)
+
+	rg.GET("/webhooks", auth.RequireWorkspaceRead(), h.listWebhooks)
+	rg.POST("/webhooks", authz, h.createWebhook)
+	rg.PATCH("/webhooks/:id", authz, h.patchWebhook)
+	rg.DELETE("/webhooks/:id", authz, h.deleteWebhook)
 	rg.POST("/tasks/:id/tags", authz, h.addTaskTag)
 	rg.DELETE("/tasks/:id/tags/:tag", authz, h.removeTaskTag)
 	rg.PATCH("/tasks/:id/custom/:field", authz, h.patchTaskCustom)

@@ -20,6 +20,14 @@ type Indexer interface {
 	Reindex(ctx context.Context, ownerUserID string, doc models.Document) error
 }
 
+// WebhookEnqueuer dispatches matching webhook events post-persist.
+// Satisfied by *webhooks.Store via a thin adapter — declared as an
+// interface here so workspace doesn't import the webhooks package and
+// create a cycle.
+type WebhookEnqueuer interface {
+	Enqueue(ctx context.Context, ownerUserID string, eventType string, payload any, subs []models.WebhookSubscription) error
+}
+
 type Service struct {
 	Repo       *store.Repository
 	Hub        *realtime.Hub
@@ -31,6 +39,9 @@ type Service struct {
 	// so the resulting iag.commercial event lands in the central inbox.
 	// nil here is fine — engine simply skips notify callbacks.
 	RuleNotify automation.NotifyHook
+	// WebhookEnqueuer fans changes out to user-registered webhook
+	// subscriptions. nil disables webhook delivery (e.g. tests).
+	WebhookEnqueuer WebhookEnqueuer
 }
 
 func (s *Service) Mutate(ctx context.Context, userID string, fn func(*models.Document) error) (store.Workspace, error) {
@@ -75,12 +86,71 @@ func (s *Service) Mutate(ctx context.Context, userID string, fn func(*models.Doc
 		for _, cb := range notifyCallbacks {
 			cb(s.RuleNotify)
 		}
+		if s.WebhookEnqueuer != nil {
+			s.dispatchWebhooks(ctx, &prev, &doc, ws.OwnerUserID)
+		}
 		return updated, nil
 	}
 	if lastErr != nil {
 		return store.Workspace{}, lastErr
 	}
 	return store.Workspace{}, store.ErrVersionConflict
+}
+
+// dispatchWebhooks compares prev and doc, emits one event per
+// meaningful change (task.created, task.status_changed,
+// task.assignee_changed, comment.created), and enqueues each into the
+// webhook delivery queue. Errors are logged but don't abort: webhook
+// failures must never block the mutation that already committed.
+func (s *Service) dispatchWebhooks(ctx context.Context, prev, doc *models.Document, ownerUserID string) {
+	if s.WebhookEnqueuer == nil || doc == nil || len(doc.Webhooks) == 0 {
+		return
+	}
+	prevTasks := map[int]models.Task{}
+	if prev != nil {
+		for _, t := range prev.Tasks {
+			prevTasks[t.ID] = t
+		}
+	}
+	now := models.ISONow()
+	emit := func(eventType string, payload any) {
+		if err := s.WebhookEnqueuer.Enqueue(ctx, ownerUserID, eventType, payload, doc.Webhooks); err != nil {
+			slog.Warn("webhook enqueue failed", "type", eventType, "err", err)
+		}
+	}
+	_ = now
+	for _, t := range doc.Tasks {
+		old, existed := prevTasks[t.ID]
+		if !existed {
+			emit("task.created", map[string]any{"task": t})
+			continue
+		}
+		if old.Status != t.Status {
+			emit("task.status_changed", map[string]any{
+				"taskId": t.ID, "from": old.Status, "to": t.Status,
+			})
+		}
+		if old.Assignee != t.Assignee {
+			emit("task.assignee_changed", map[string]any{
+				"taskId": t.ID, "from": old.Assignee, "to": t.Assignee,
+			})
+		}
+		if old.Done != t.Done && t.Done {
+			emit("task.completed", map[string]any{"taskId": t.ID, "task": t})
+		}
+	}
+	prevComments := map[int]struct{}{}
+	if prev != nil {
+		for _, c := range prev.TaskComments {
+			prevComments[c.ID] = struct{}{}
+		}
+	}
+	for _, c := range doc.TaskComments {
+		if _, existed := prevComments[c.ID]; existed {
+			continue
+		}
+		emit("comment.created", map[string]any{"comment": c})
+	}
 }
 
 // cloneDocument deep-copies a Document via JSON so the automation

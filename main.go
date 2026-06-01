@@ -23,6 +23,7 @@ import (
 	"github.com/iag/project-management/backend/internal/config"
 	"github.com/iag/project-management/backend/internal/outbox"
 	"github.com/iag/project-management/backend/internal/search"
+	"github.com/iag/project-management/backend/internal/webhooks"
 	pgdb "github.com/iag/project-management/backend/internal/db"
 	pmconsumer "github.com/iag/project-management/backend/internal/consumer"
 	"github.com/iag/project-management/backend/internal/events"
@@ -168,6 +169,11 @@ func main() {
 
 	searchSvc := search.New(pool)
 
+	webhookStore := webhooks.NewStore(pool)
+	webhookPublisher := webhooks.NewPublisher(pool)
+	go webhookPublisher.Run(ctx)
+	slog.Info("webhook publisher started")
+
 	engine := router.New(router.Options{
 		Cfg:           cfg,
 		PlatformAuth:  platformAuth,
@@ -179,6 +185,7 @@ func main() {
 		AuditRecorder: auditRecorder,
 		Search:        searchSvc,
 		RuleNotify:    makeRuleNotifyHook(eventBus),
+		Webhooks:      webhookStore,
 	})
 
 	srv := &http.Server{

@@ -60,6 +60,22 @@ func NextRuleID(d *Document) int {
 	return NextIntID(len(d.Rules), func(i int) int { return d.Rules[i].ID })
 }
 
+func NextTimeEntryID(d *Document) int {
+	return NextIntID(len(d.TimeEntries), func(i int) int { return d.TimeEntries[i].ID })
+}
+
+func NextPortfolioID(d *Document) int {
+	return NextIntID(len(d.Portfolios), func(i int) int { return d.Portfolios[i].ID })
+}
+
+func NextFormID(d *Document) int {
+	return NextIntID(len(d.Forms), func(i int) int { return d.Forms[i].ID })
+}
+
+func NextWebhookID(d *Document) int {
+	return NextIntID(len(d.Webhooks), func(i int) int { return d.Webhooks[i].ID })
+}
+
 func NextRequisitionID(d *Document) int {
 	return NextIntID(len(d.Requisitions), func(i int) int { return d.Requisitions[i].ID })
 }

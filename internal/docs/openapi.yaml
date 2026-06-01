@@ -51,6 +51,12 @@ tags:
   - name: templates
   - name: rules
   - name: recurrence
+  - name: time-tracking
+  - name: portfolios
+  - name: forms
+  - name: reports
+  - name: webhooks
+  - name: share
 
 components:
   securitySchemes:
@@ -1270,6 +1276,264 @@ paths:
                   items: { type: array, items: { type: object } }
                   limit: { type: integer }
                   offset: { type: integer }
+
+  /api/v1/tasks/{id}/time/start:
+    post:
+      tags: [time-tracking]
+      summary: Open a running timer on a task for the actor
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        '200': { description: ok }
+        '409': { description: timer already running }
+  /api/v1/tasks/{id}/time/stop:
+    post:
+      tags: [time-tracking]
+      summary: Close the actor's running timer on a task
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      responses: { '200': { description: ok } }
+  /api/v1/tasks/{id}/time:
+    get:
+      tags: [time-tracking]
+      summary: List time entries for a task (with total seconds)
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+  /api/v1/users/{id}/time:
+    get:
+      tags: [time-tracking]
+      summary: List time entries for a user (with from/to filters)
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses: { '200': { description: ok } }
+
+  /api/v1/portfolios:
+    get:
+      tags: [portfolios]
+      summary: List portfolios with rollup stats
+      responses: { '200': { description: ok } }
+    post:
+      tags: [portfolios]
+      summary: Create a portfolio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                projectIds: { type: array, items: { type: string } }
+              required: [name]
+      responses: { '200': { description: ok } }
+  /api/v1/portfolios/{id}:
+    get:
+      tags: [portfolios]
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+    patch:
+      tags: [portfolios]
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [portfolios]
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /api/v1/forms:
+    get:
+      tags: [forms]
+      summary: List forms in the workspace
+      responses: { '200': { description: ok } }
+    post:
+      tags: [forms]
+      summary: Create an intake form (auto-generates a slug if absent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                slug: { type: string }
+                projectId: { type: string }
+                public: { type: boolean }
+                fields:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      label: { type: string }
+                      type: { type: string, enum: [text, longtext, number, date, select] }
+                      options: { type: array, items: { type: string } }
+                      required: { type: boolean }
+              required: [name]
+      responses: { '200': { description: ok } }
+  /api/v1/forms/{id}:
+    patch:
+      tags: [forms]
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [forms]
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+  /public/forms/{slug}:
+    get:
+      tags: [forms]
+      summary: Describe a public form (fields only, no auth)
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: ok } }
+    post:
+      tags: [forms]
+      summary: Submit a public form (creates a task in the configured project)
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                values:
+                  type: object
+                  additionalProperties: { type: string }
+              required: [values]
+      responses: { '200': { description: ok } }
+
+  /api/v1/reports/workload:
+    get:
+      tags: [reports]
+      summary: Task counts grouped by assignee | project | priority
+      parameters:
+        - in: query
+          name: by
+          schema: { type: string, enum: [assignee, project, priority], default: assignee }
+      responses: { '200': { description: ok } }
+  /api/v1/reports/throughput:
+    get:
+      tags: [reports]
+      summary: Completed-task counts per time bucket
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+        - in: query
+          name: groupBy
+          schema: { type: string, enum: [day, week, month], default: week }
+      responses: { '200': { description: ok } }
+  /api/v1/reports/status-rollup:
+    get:
+      tags: [reports]
+      summary: Task counts grouped by status (optionally project-scoped)
+      parameters:
+        - in: query
+          name: projectId
+          schema: { type: string }
+      responses: { '200': { description: ok } }
+  /api/v1/reports/burndown/{id}:
+    get:
+      tags: [reports]
+      summary: Sprint burndown series (remaining tasks per day)
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /api/v1/webhooks:
+    get:
+      tags: [webhooks]
+      summary: List webhook subscriptions (secrets redacted)
+      responses: { '200': { description: ok } }
+    post:
+      tags: [webhooks]
+      summary: Create a webhook subscription (secret returned ONCE on create)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, format: uri }
+                events: { type: array, items: { type: string }, description: "Empty/star = all; supports glob suffix like 'task.*'." }
+                secret: { type: string, description: "Optional; auto-generated when blank." }
+              required: [url]
+      responses: { '200': { description: ok } }
+  /api/v1/webhooks/{id}:
+    patch:
+      tags: [webhooks]
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [webhooks]
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /shared/{token}/task/{id}:
+    get:
+      tags: [share]
+      summary: Read a single task via a public share token (no platform auth)
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/EntityID'
+      responses: { '200': { description: ok } }
+  /shared/{token}/project/{id}:
+    get:
+      tags: [share]
+      summary: Read a project (with its tasks) via a public share token
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: ok } }
 
   /api/v1/platform/status:
     get:
