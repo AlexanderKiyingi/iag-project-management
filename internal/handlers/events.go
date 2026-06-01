@@ -59,11 +59,17 @@ func publishTaskAssigned(ctx context.Context, bus *events.Bus, repo *store.Repos
 	bus.PublishCommercial(ctx, events.TypeTaskAssigned, data, strconv.Itoa(task.ID))
 }
 
-func publishMentions(ctx context.Context, bus *events.Bus, mentionees []string, author, text, contextKind, contextID string) {
+func publishMentions(ctx context.Context, bus *events.Bus, mentionees []string, author, text, contextKind, contextID string, members []models.Member) {
 	if bus == nil || !bus.Enabled() || len(mentionees) == 0 {
 		return
 	}
 	recipient := defaultNotifyRecipient()
+	byInitials := map[string]models.Member{}
+	for _, m := range members {
+		if k := strings.TrimSpace(m.Initials); k != "" {
+			byInitials[strings.ToLower(k)] = m
+		}
+	}
 	for _, mentionee := range mentionees {
 		mentionee = strings.TrimSpace(mentionee)
 		if mentionee == "" {
@@ -75,6 +81,18 @@ func publishMentions(ctx context.Context, bus *events.Bus, mentionees []string, 
 			"text":      text,
 			"context":   contextKind,
 			"contextId": contextID,
+		}
+		// Resolve initials → canonical user identifier so the central
+		// notifications service can dispatch the in-app inbox alert to
+		// the right user; fall back to the email NOTIFY_DEFAULT_RECIPIENT
+		// for the email channel only.
+		if m, ok := byInitials[strings.ToLower(mentionee)]; ok {
+			if m.UserID != "" {
+				data["mentioneeUserId"] = m.UserID
+			}
+			if m.Email != "" {
+				data["mentioneeEmail"] = m.Email
+			}
 		}
 		if recipient != "" {
 			data["recipient"] = recipient

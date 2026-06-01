@@ -11,6 +11,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/segmentio/kafka-go v0.4.47
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -50,7 +51,6 @@ require (
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/alvor-technologies/iag-authclient => ./pkg/authclient

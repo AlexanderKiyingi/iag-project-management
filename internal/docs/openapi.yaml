@@ -1,0 +1,677 @@
+openapi: 3.1.0
+info:
+  title: IAG Project Management API
+  version: 1.0.0
+  description: |
+    Workspace-document API for the IAG Project Management service.
+    Frontends should typically call through the api-gateway at
+    `/api/v1/project-management/*`; the paths below are the suffix
+    after that prefix is stripped.
+
+    The companion narrative is `docs/FRONTEND_INTEGRATION.md`. Endpoint
+    surface here is hand-maintained — keep both files in sync when
+    adding or changing routes.
+
+servers:
+  - url: https://iag-api-gateway-production.up.railway.app/api/v1/project-management
+    description: Production via gateway
+  - url: http://localhost:8080/api/v1/project-management
+    description: Local via gateway
+  - url: http://localhost:4102
+    description: Local direct (no gateway)
+
+tags:
+  - name: health
+  - name: workspace
+  - name: tasks
+  - name: subtasks
+  - name: tags
+  - name: dependencies
+  - name: comments
+  - name: goals
+  - name: sprints
+  - name: chats
+  - name: messages
+  - name: reactions
+  - name: projects
+  - name: requisitions
+  - name: files
+  - name: members
+  - name: settings
+  - name: realtime
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    EntityID:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer }
+    Emoji:
+      in: path
+      name: emoji
+      required: true
+      schema: { type: string }
+    WorkspaceUser:
+      in: header
+      name: X-Workspace-User
+      schema: { type: string }
+      description: Display identifier of the actor (initials etc.).
+    IfMatch:
+      in: header
+      name: If-Match
+      schema: { type: integer }
+      description: Expected workspace version for optimistic locking.
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+    WorkspaceEnvelope:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/Document' }
+        version: { type: integer, format: int64 }
+      required: [data, version]
+    Document:
+      type: object
+      description: Full workspace document; fields are append-only. Frontends should treat unknown fields as forward-compatible.
+      additionalProperties: true
+    Task:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        project: { type: string }
+        section: { type: string }
+        assignee: { type: string }
+        due: { type: string, description: "Legacy single-date field; for new code prefer startDate/endDate." }
+        startDate: { type: string }
+        endDate: { type: string }
+        priority: { type: string }
+        status: { type: string }
+        done: { type: boolean }
+        desc: { type: string }
+        subtasks: { type: array, items: { type: string }, description: "Legacy name-only mirror of Subtask entities under Document.subtaskEntities." }
+        tags: { type: array, items: { type: string } }
+        dependsOn: { type: array, items: { type: integer } }
+        sprintId: { type: integer }
+        customValues: { type: object, additionalProperties: { type: string } }
+    Subtask:
+      type: object
+      properties:
+        id: { type: integer }
+        parentTaskId: { type: integer }
+        name: { type: string }
+        assignee: { type: string }
+        due: { type: string }
+        done: { type: boolean }
+        order: { type: integer }
+      required: [id, parentTaskId, name]
+    Message:
+      type: object
+      properties:
+        id: { type: integer }
+        chatId: { type: integer }
+        author: { type: string }
+        text: { type: string }
+        replyTo: { type: integer, nullable: true }
+        time: { type: string }
+        reactions:
+          type: object
+          additionalProperties: { type: array, items: { type: string } }
+        edited: { type: boolean }
+        deleted: { type: boolean }
+        readBy: { type: array, items: { type: string } }
+        reminderAt: { type: string, nullable: true }
+
+security:
+  - bearer: []
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200': { description: ok }
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness probe (alias)
+      security: []
+      responses:
+        '200': { description: ok }
+  /ready:
+    get:
+      tags: [health]
+      summary: Readiness probe (pings database)
+      security: []
+      responses:
+        '200': { description: ready }
+        '503': { description: degraded }
+
+  /api/v1/workspace:
+    get:
+      tags: [workspace]
+      summary: Load the workspace document
+      responses:
+        '200':
+          description: workspace
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvelope' } }
+    put:
+      tags: [workspace]
+      summary: Replace the workspace document (optimistic-locked)
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data: { $ref: '#/components/schemas/Document' }
+                version: { type: integer, format: int64 }
+              required: [data]
+      responses:
+        '200': { description: updated, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvelope' } } } }
+        '409': { description: version conflict, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/v1/ws/workspace:
+    get:
+      tags: [realtime]
+      summary: WebSocket — full-document push on every mutation
+      description: 'Upgrade with `?token=<jwt>`. Server sends `{type:"workspace", data: Document, version}` on every successful mutation.'
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        '101': { description: switching protocols }
+
+  /api/v1/tasks:
+    post:
+      tags: [tasks]
+      summary: Create a task
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                desc: { type: string }
+                project: { type: string }
+                section: { type: string }
+                assignee: { type: string }
+                priority: { type: string }
+                due: { type: string }
+                startDate: { type: string }
+                endDate: { type: string }
+                sprintId: { type: integer, nullable: true }
+              required: [name]
+      responses:
+        '200':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task: { $ref: '#/components/schemas/Task' }
+                  version: { type: integer }
+  /api/v1/tasks/{id}:
+    patch:
+      tags: [tasks]
+      summary: Patch a task (partial update)
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Task' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvelope' } } } }
+  /api/v1/tasks/bulk:
+    post:
+      tags: [tasks]
+      summary: Bulk-create tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tasks:
+                  type: array
+                  items: { $ref: '#/components/schemas/Task' }
+              required: [tasks]
+      responses:
+        '200':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks: { type: array, items: { $ref: '#/components/schemas/Task' } }
+                  version: { type: integer }
+  /api/v1/tasks/bulk-patch:
+    post:
+      tags: [tasks]
+      summary: Bulk-patch tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                patches:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      patch: { type: object, additionalProperties: true }
+                    required: [id, patch]
+              required: [patches]
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvelope' } } } }
+  /api/v1/tasks/delete-batch:
+    post:
+      tags: [tasks]
+      summary: Bulk-delete tasks by id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids: { type: array, items: { type: integer } }
+              required: [ids]
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceEnvelope' } } } }
+  /api/v1/tasks/{id}/tags:
+    post:
+      tags: [tags]
+      summary: Add a tag to a task
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tag: { type: string }
+              required: [tag]
+      responses:
+        '200': { description: ok }
+  /api/v1/tasks/{id}/tags/{tag}:
+    delete:
+      tags: [tags]
+      summary: Remove a tag from a task
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - in: path
+          name: tag
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+  /api/v1/tasks/{id}/custom/{field}:
+    patch:
+      tags: [tasks]
+      summary: Set a custom field value on a task
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - in: path
+          name: field
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value: { type: string }
+              required: [value]
+      responses:
+        '200': { description: ok }
+  /api/v1/tasks/{id}/deps:
+    post:
+      tags: [dependencies]
+      summary: Add a dependency to a task
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                depId: { type: integer }
+              required: [depId]
+      responses:
+        '200': { description: ok }
+  /api/v1/tasks/{id}/deps/{depId}:
+    delete:
+      tags: [dependencies]
+      summary: Remove a dependency from a task
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - in: path
+          name: depId
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: ok }
+  /api/v1/tasks/{id}/comments:
+    post:
+      tags: [comments]
+      summary: Add a comment to a task
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+              required: [text]
+      responses:
+        '200': { description: ok }
+  /api/v1/comments/{id}:
+    delete:
+      tags: [comments]
+      summary: Delete a comment
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses:
+        '200': { description: ok }
+
+  /api/v1/tasks/{id}/subtasks:
+    post:
+      tags: [subtasks]
+      summary: Create a subtask under a task
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                assignee: { type: string }
+                due: { type: string }
+              required: [name]
+      responses:
+        '200':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subtask: { $ref: '#/components/schemas/Subtask' }
+                  version: { type: integer }
+  /api/v1/tasks/{id}/subtasks/reorder:
+    post:
+      tags: [subtasks]
+      summary: Reorder a task's subtasks
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                order:
+                  type: array
+                  items: { type: integer }
+              required: [order]
+      responses:
+        '200': { description: ok }
+  /api/v1/subtasks/{id}:
+    patch:
+      tags: [subtasks]
+      summary: Patch a subtask
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Subtask' }
+      responses:
+        '200': { description: ok }
+    delete:
+      tags: [subtasks]
+      summary: Delete a subtask
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses:
+        '200': { description: ok }
+
+  /api/v1/goals:
+    post:
+      tags: [goals]
+      summary: Create a goal
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+  /api/v1/goals/{id}:
+    patch:
+      tags: [goals]
+      summary: Patch a goal
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [goals]
+      summary: Delete a goal
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+  /api/v1/goals/{id}/progress:
+    post:
+      tags: [goals]
+      summary: Adjust goal progress
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delta: { type: integer }
+              required: [delta]
+      responses: { '200': { description: ok } }
+
+  /api/v1/sprints:
+    post:
+      tags: [sprints]
+      summary: Create a sprint
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+  /api/v1/sprints/{id}:
+    patch:
+      tags: [sprints]
+      summary: Patch a sprint
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [sprints]
+      summary: Delete a sprint
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /api/v1/chats:
+    post:
+      tags: [chats]
+      summary: Create a chat
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+  /api/v1/chats/{id}/read:
+    post:
+      tags: [chats]
+      summary: Mark all messages in a chat read by the actor
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+  /api/v1/chats/{id}/mute:
+    post:
+      tags: [chats]
+      summary: Toggle mute on a chat
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /api/v1/messages:
+    post:
+      tags: [messages]
+      summary: Post a message
+      parameters: [{ $ref: '#/components/parameters/WorkspaceUser' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chatId: { type: integer }
+                text: { type: string }
+                replyTo: { type: integer, nullable: true }
+                edited: { type: boolean }
+                deleted: { type: boolean }
+                reminderAt: { type: string, nullable: true }
+              required: [chatId, text]
+      responses: { '200': { description: ok } }
+  /api/v1/messages/{id}/reactions:
+    post:
+      tags: [reactions]
+      summary: Add a reaction to a message
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                emoji: { type: string }
+              required: [emoji]
+      responses: { '200': { description: ok } }
+  /api/v1/messages/{id}/reactions/{emoji}:
+    delete:
+      tags: [reactions]
+      summary: Remove the actor's reaction from a message
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/Emoji'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      responses: { '200': { description: ok } }
+
+  /api/v1/projects/{id}:
+    put:
+      tags: [projects]
+      summary: Upsert a project
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+
+  /api/v1/requisitions:
+    post:
+      tags: [requisitions]
+      summary: Create a requisition (publishes pm.requisition.submitted)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+
+  /api/v1/files:
+    post:
+      tags: [files]
+      summary: Create a file metadata entry (data stored inline or as blob)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+  /api/v1/files/{id}:
+    get:
+      tags: [files]
+      summary: Download a file blob
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /api/v1/workspace/members:
+    post:
+      tags: [members]
+      summary: Add a member to the workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string }
+                role: { type: string }
+              required: [userId, role]
+      responses: { '200': { description: ok } }
+  /api/v1/workspace/org:
+    patch:
+      tags: [members]
+      summary: Set the workspace's org affinity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                orgId: { type: string }
+              required: [orgId]
+      responses: { '200': { description: ok } }
+
+  /api/v1/settings:
+    patch:
+      tags: [settings]
+      summary: Update workspace UI settings
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: ok } }
+  /api/v1/audit:
+    delete:
+      tags: [settings]
+      summary: Clear the audit log
+      responses: { '200': { description: ok } }
+
+  /api/v1/platform/status:
+    get:
+      tags: [health]
+      summary: Platform dependency health (auth, redis, kafka)
+      responses: { '200': { description: ok } }

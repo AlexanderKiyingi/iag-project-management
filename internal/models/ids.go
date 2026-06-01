@@ -40,6 +40,10 @@ func NextCommentID(d *Document) int {
 	return NextIntID(len(d.TaskComments), func(i int) int { return d.TaskComments[i].ID })
 }
 
+func NextSubtaskID(d *Document) int {
+	return NextIntID(len(d.Subtasks), func(i int) int { return d.Subtasks[i].ID })
+}
+
 func NextRequisitionID(d *Document) int {
 	return NextIntID(len(d.Requisitions), func(i int) int { return d.Requisitions[i].ID })
 }

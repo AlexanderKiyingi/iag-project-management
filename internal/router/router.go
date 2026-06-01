@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/config"
+	"github.com/iag/project-management/backend/internal/docs"
 	"github.com/iag/project-management/backend/internal/events"
 	"github.com/iag/project-management/backend/internal/files"
 	"github.com/iag/project-management/backend/internal/handlers"
@@ -49,6 +50,7 @@ func New(opts Options) *gin.Engine {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "database": true})
 	})
+	docs.Register(r)
 
 	if opts.PlatformAuth != nil {
 		r.Use(opts.PlatformAuth.AttachPrincipal())

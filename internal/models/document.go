@@ -15,6 +15,7 @@ type Document struct {
 	Audit                []AuditEntry           `json:"audit"`
 	Files                []WorkspaceFile        `json:"files"`
 	TaskComments         []TaskComment          `json:"taskComments"`
+	Subtasks             []Subtask              `json:"subtaskEntities,omitempty"`
 	TaskCustomFieldDefs  []TaskCustomFieldDef   `json:"taskCustomFieldDefs"`
 	TaskListColumns      map[string]bool        `json:"taskListColumns"`
 	SidebarCollapsed     bool                   `json:"sidebarCollapsed"`
@@ -41,6 +42,8 @@ type Task struct {
 	Section      string            `json:"section"`
 	Assignee     string            `json:"assignee"`
 	Due          string            `json:"due"`
+	StartDate    string            `json:"startDate,omitempty"`
+	EndDate      string            `json:"endDate,omitempty"`
 	Priority     string            `json:"priority"`
 	Status       string            `json:"status"`
 	Done         bool              `json:"done"`
@@ -183,6 +186,19 @@ type TaskComment struct {
 	Text     string   `json:"text"`
 	Mentions []string `json:"mentions"`
 	Time     string   `json:"time"`
+}
+
+// Subtask is a first-class entity belonging to a parent Task. The legacy
+// Task.Subtasks []string field is kept as a name-only mirror so existing
+// frontends keep working; create/delete handlers update both.
+type Subtask struct {
+	ID           int    `json:"id"`
+	ParentTaskID int    `json:"parentTaskId"`
+	Name         string `json:"name"`
+	Assignee     string `json:"assignee,omitempty"`
+	Due          string `json:"due,omitempty"`
+	Done         bool   `json:"done"`
+	Order        int    `json:"order"`
 }
 
 type TaskCustomFieldDef struct {

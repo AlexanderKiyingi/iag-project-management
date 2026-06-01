@@ -32,6 +32,8 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 
 	rg.POST("/tasks", authz, h.createTask)
 	rg.PATCH("/tasks/:id", authz, h.patchTask)
+	rg.POST("/tasks/bulk", authz, h.createTasksBulk)
+	rg.POST("/tasks/bulk-patch", authz, h.patchTasksBulk)
 	rg.POST("/tasks/delete-batch", authz, h.deleteTasksBatch)
 	rg.POST("/tasks/:id/tags", authz, h.addTaskTag)
 	rg.DELETE("/tasks/:id/tags/:tag", authz, h.removeTaskTag)
@@ -40,6 +42,10 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.DELETE("/tasks/:id/deps/:depId", authz, h.removeTaskDep)
 	rg.POST("/tasks/:id/comments", authz, h.addTaskComment)
 	rg.DELETE("/comments/:id", authz, h.deleteTaskComment)
+	rg.POST("/tasks/:id/subtasks", authz, h.createSubtask)
+	rg.POST("/tasks/:id/subtasks/reorder", authz, h.reorderSubtasks)
+	rg.PATCH("/subtasks/:id", authz, h.patchSubtask)
+	rg.DELETE("/subtasks/:id", authz, h.deleteSubtask)
 
 	rg.POST("/goals", authz, h.createGoal)
 	rg.PATCH("/goals/:id", authz, h.patchGoal)
@@ -54,6 +60,8 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.POST("/chats/:id/read", authz, h.chatRead)
 	rg.POST("/chats/:id/mute", authz, h.chatMute)
 	rg.POST("/messages", authz, h.postMessage)
+	rg.POST("/messages/:id/reactions", authz, h.addMessageReaction)
+	rg.DELETE("/messages/:id/reactions/:emoji", authz, h.removeMessageReaction)
 
 	rg.POST("/files", authz, h.createFile)
 	rg.GET("/files/:id", auth.RequireWorkspaceRead(), h.getFile)
@@ -112,14 +120,16 @@ func (h *Entities) patchSettings(c *gin.Context) {
 
 func (h *Entities) createTask(c *gin.Context) {
 	var in struct {
-		Name     string `json:"name"`
-		Desc     string `json:"desc"`
-		Project  string `json:"project"`
-		Section  string `json:"section"`
-		Assignee string `json:"assignee"`
-		Priority string `json:"priority"`
-		Due      string `json:"due"`
-		SprintID *int   `json:"sprintId"`
+		Name      string `json:"name"`
+		Desc      string `json:"desc"`
+		Project   string `json:"project"`
+		Section   string `json:"section"`
+		Assignee  string `json:"assignee"`
+		Priority  string `json:"priority"`
+		Due       string `json:"due"`
+		StartDate string `json:"startDate"`
+		EndDate   string `json:"endDate"`
+		SprintID  *int   `json:"sprintId"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -138,19 +148,21 @@ func (h *Entities) createTask(c *gin.Context) {
 			sprintID = *in.SprintID
 		}
 		created = models.Task{
-			ID:       models.NextTaskID(d),
-			Name:     in.Name,
-			Project:  in.Project,
-			Section:  in.Section,
-			Assignee: in.Assignee,
-			Priority: in.Priority,
-			Due:      in.Due,
-			Status:   "on_track",
-			Tags:     []string{},
+			ID:        models.NextTaskID(d),
+			Name:      in.Name,
+			Project:   in.Project,
+			Section:   in.Section,
+			Assignee:  in.Assignee,
+			Priority:  in.Priority,
+			Due:       in.Due,
+			StartDate: in.StartDate,
+			EndDate:   in.EndDate,
+			Status:    "on_track",
+			Tags:      []string{},
 			DependsOn: []int{},
-			SprintID: sprintID,
+			SprintID:  sprintID,
 			CustomValues: map[string]string{},
-			Activity: []models.ActivityEntry{},
+			Activity:  []models.ActivityEntry{},
 		}
 		if in.Desc != "" {
 			created.Desc = in.Desc
@@ -236,6 +248,12 @@ func applyTaskPatch(t *models.Task, patch map[string]any) {
 	if v, ok := patch["due"].(string); ok {
 		t.Due = v
 	}
+	if v, ok := patch["startDate"].(string); ok {
+		t.StartDate = v
+	}
+	if v, ok := patch["endDate"].(string); ok {
+		t.EndDate = v
+	}
 	if v, ok := patch["priority"].(string); ok {
 		t.Priority = v
 	}
@@ -254,6 +272,158 @@ func applyTaskPatch(t *models.Task, patch map[string]any) {
 	if v, ok := patch["sprintId"].(float64); ok {
 		t.SprintID = int(v)
 	}
+}
+
+type bulkTaskInput struct {
+	Name      string `json:"name"`
+	Desc      string `json:"desc"`
+	Project   string `json:"project"`
+	Section   string `json:"section"`
+	Assignee  string `json:"assignee"`
+	Priority  string `json:"priority"`
+	Due       string `json:"due"`
+	StartDate string `json:"startDate"`
+	EndDate   string `json:"endDate"`
+	SprintID  *int   `json:"sprintId"`
+}
+
+func (h *Entities) createTasksBulk(c *gin.Context) {
+	var body struct {
+		Tasks []bulkTaskInput `json:"tasks"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Tasks) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	for _, in := range body.Tasks {
+		if strings.TrimSpace(in.Name) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "every task requires a name"})
+			return
+		}
+	}
+	actor := c.GetHeader("X-Workspace-User")
+	uid, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	created := make([]models.Task, 0, len(body.Tasks))
+	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
+		created = created[:0]
+		for _, in := range body.Tasks {
+			sprintID := 0
+			if in.SprintID != nil {
+				sprintID = *in.SprintID
+			}
+			t := models.Task{
+				ID:           models.NextTaskID(d),
+				Name:         in.Name,
+				Desc:         in.Desc,
+				Project:      in.Project,
+				Section:      in.Section,
+				Assignee:     in.Assignee,
+				Priority:     in.Priority,
+				Due:          in.Due,
+				StartDate:    in.StartDate,
+				EndDate:      in.EndDate,
+				Status:       "on_track",
+				Tags:         []string{},
+				DependsOn:    []int{},
+				SprintID:     sprintID,
+				CustomValues: map[string]string{},
+				Activity:     []models.ActivityEntry{},
+			}
+			d.Tasks = append(d.Tasks, t)
+			tid := t.ID
+			models.AppendAudit(d, actor, "task.created", fmt.Sprintf("created task %q (bulk)", in.Name), &tid)
+			created = append(created, t)
+		}
+		return nil
+	})
+	if err != nil {
+		writeMutationError(c, err)
+		return
+	}
+	if h.Svc.Events != nil && h.Svc.Events.Enabled() {
+		claims, _ := middleware.PlatformClaims(c)
+		email := ""
+		if claims != nil {
+			email = claims.Email
+		}
+		for _, t := range created {
+			if strings.TrimSpace(t.Assignee) == "" {
+				continue
+			}
+			publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, t, actor, email)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"tasks": created, "version": ws.Version})
+}
+
+func (h *Entities) patchTasksBulk(c *gin.Context) {
+	var body struct {
+		Patches []struct {
+			ID    int            `json:"id"`
+			Patch map[string]any `json:"patch"`
+		} `json:"patches"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Patches) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	patchByID := make(map[int]map[string]any, len(body.Patches))
+	for _, p := range body.Patches {
+		if p.ID == 0 || p.Patch == nil {
+			continue
+		}
+		patchByID[p.ID] = p.Patch
+	}
+	if len(patchByID) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no valid patches"})
+		return
+	}
+	actor := c.GetHeader("X-Workspace-User")
+	uid, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	type assignChange struct {
+		updated models.Task
+		prev    string
+	}
+	var changes []assignChange
+	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
+		changes = changes[:0]
+		for i := range d.Tasks {
+			patch, ok := patchByID[d.Tasks[i].ID]
+			if !ok {
+				continue
+			}
+			prev := d.Tasks[i].Assignee
+			applyTaskPatch(&d.Tasks[i], patch)
+			changes = append(changes, assignChange{updated: d.Tasks[i], prev: prev})
+			tid := d.Tasks[i].ID
+			models.AppendAudit(d, actor, "task.updated", fmt.Sprintf("bulk-updated task #%d", tid), &tid)
+		}
+		return nil
+	})
+	if err != nil {
+		writeMutationError(c, err)
+		return
+	}
+	if h.Svc.Events != nil && h.Svc.Events.Enabled() {
+		claims, _ := middleware.PlatformClaims(c)
+		email := ""
+		if claims != nil {
+			email = claims.Email
+		}
+		for _, ch := range changes {
+			if strings.TrimSpace(ch.updated.Assignee) == "" || ch.updated.Assignee == ch.prev {
+				continue
+			}
+			publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, ch.updated, actor, email)
+		}
+	}
+	respondWorkspace(c, ws)
 }
 
 func (h *Entities) deleteTasksBatch(c *gin.Context) {
@@ -410,6 +580,7 @@ func (h *Entities) addTaskComment(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
+	var membersSnapshot []models.Member
 	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
 		cmt := models.TaskComment{
 			TaskID: taskID, Author: actor, Text: body.Text,
@@ -417,6 +588,7 @@ func (h *Entities) addTaskComment(c *gin.Context) {
 		}
 		cmt.ID = models.NextCommentID(d)
 		d.TaskComments = append(d.TaskComments, cmt)
+		membersSnapshot = append(membersSnapshot[:0], d.Members...)
 		return nil
 	})
 	if err != nil {
@@ -424,7 +596,7 @@ func (h *Entities) addTaskComment(c *gin.Context) {
 		return
 	}
 	if len(parsedMentions) > 0 && h.Svc.Events != nil && h.Svc.Events.Enabled() {
-		publishMentions(c.Request.Context(), h.Svc.Events, parsedMentions, actor, body.Text, "task_comment", strconv.Itoa(taskID))
+		publishMentions(c.Request.Context(), h.Svc.Events, parsedMentions, actor, body.Text, "task_comment", strconv.Itoa(taskID), membersSnapshot)
 	}
 	respondWorkspace(c, ws)
 }
@@ -697,6 +869,7 @@ func (h *Entities) postMessage(c *gin.Context) {
 		return
 	}
 	var messageID int
+	var membersSnapshot []models.Member
 	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
 		msg := models.Message{
 			ChatID: body.ChatID, Author: actor, Text: body.Text,
@@ -707,6 +880,7 @@ func (h *Entities) postMessage(c *gin.Context) {
 		msg.ID = models.NextMessageID(d)
 		messageID = msg.ID
 		d.Messages = append(d.Messages, msg)
+		membersSnapshot = append(membersSnapshot[:0], d.Members...)
 		return nil
 	})
 	if err != nil {
@@ -714,9 +888,90 @@ func (h *Entities) postMessage(c *gin.Context) {
 		return
 	}
 	if len(parsedMentions) > 0 && h.Svc.Events != nil && h.Svc.Events.Enabled() {
-		publishMentions(c.Request.Context(), h.Svc.Events, parsedMentions, actor, body.Text, "chat_message", strconv.Itoa(messageID))
+		publishMentions(c.Request.Context(), h.Svc.Events, parsedMentions, actor, body.Text, "chat_message", strconv.Itoa(messageID), membersSnapshot)
 	}
 	respondWorkspace(c, ws)
+}
+
+func (h *Entities) addMessageReaction(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var body struct {
+		Emoji string `json:"emoji"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Emoji) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	actor := c.GetHeader("X-Workspace-User")
+	if actor == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		return
+	}
+	mutate(c, h.Svc, func(d *models.Document) error {
+		for i := range d.Messages {
+			if d.Messages[i].ID != id {
+				continue
+			}
+			if d.Messages[i].Reactions == nil {
+				d.Messages[i].Reactions = map[string][]string{}
+			}
+			users := d.Messages[i].Reactions[body.Emoji]
+			for _, u := range users {
+				if u == actor {
+					return nil
+				}
+			}
+			d.Messages[i].Reactions[body.Emoji] = append(users, actor)
+			return nil
+		}
+		return fmt.Errorf("message not found")
+	})
+}
+
+func (h *Entities) removeMessageReaction(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	emoji := c.Param("emoji")
+	if emoji == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid emoji"})
+		return
+	}
+	actor := c.GetHeader("X-Workspace-User")
+	if actor == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		return
+	}
+	mutate(c, h.Svc, func(d *models.Document) error {
+		for i := range d.Messages {
+			if d.Messages[i].ID != id {
+				continue
+			}
+			users, ok := d.Messages[i].Reactions[emoji]
+			if !ok {
+				return nil
+			}
+			kept := users[:0]
+			for _, u := range users {
+				if u != actor {
+					kept = append(kept, u)
+				}
+			}
+			if len(kept) == 0 {
+				delete(d.Messages[i].Reactions, emoji)
+			} else {
+				d.Messages[i].Reactions[emoji] = kept
+			}
+			return nil
+		}
+		return fmt.Errorf("message not found")
+	})
 }
 
 func (h *Entities) createFile(c *gin.Context) {
