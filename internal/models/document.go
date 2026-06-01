@@ -18,6 +18,8 @@ type Document struct {
 	Subtasks             []Subtask              `json:"subtaskEntities,omitempty"`
 	Sections             []Section              `json:"sectionEntities,omitempty"`
 	EntityComments       []EntityComment        `json:"entityComments,omitempty"`
+	Templates            []Template             `json:"templates,omitempty"`
+	Rules                []Rule                 `json:"rules,omitempty"`
 	TaskCustomFieldDefs  []TaskCustomFieldDef   `json:"taskCustomFieldDefs"`
 	TaskListColumns      map[string]bool        `json:"taskListColumns"`
 	SidebarCollapsed     bool                   `json:"sidebarCollapsed"`
@@ -98,11 +100,32 @@ type Task struct {
 	CustomValues map[string]string `json:"customValues"`
 	Activity     []ActivityEntry   `json:"activity"`
 	DeletedAt    string            `json:"deletedAt,omitempty"`
+	// Approval workflow (Task.Type == TaskTypeApproval). Approvers
+	// names them; ApprovedBy records who has signed off so far. The
+	// task only flips Done=true when len(ApprovedBy) >= len(Approvers).
+	Approvers    []string          `json:"approvers,omitempty"`
+	ApprovedBy   []string          `json:"approvedBy,omitempty"`
+	// Recurrence is the optional rrule subset for Phase 4.2; when set
+	// the recurrence job clones the task on schedule.
+	Recurrence   *TaskRecurrence   `json:"recurrence,omitempty"`
+}
+
+// TaskRecurrence is a minimal recurrence spec. Pattern is one of
+// "daily" | "weekly" | "monthly". Interval is the every-N step;
+// EndDate stops the chain when set. NextDueAt is the next instance
+// the recurrence job is expected to create (server-managed; clients
+// should not set this).
+type TaskRecurrence struct {
+	Pattern   string `json:"pattern"`
+	Interval  int    `json:"interval"`
+	EndDate   string `json:"endDate,omitempty"`
+	NextDueAt string `json:"nextDueAt,omitempty"`
 }
 
 const (
 	TaskTypeTask      = "task"
 	TaskTypeMilestone = "milestone"
+	TaskTypeApproval  = "approval"
 )
 
 type ActivityEntry struct {
@@ -268,6 +291,81 @@ const (
 	EntityCommentProject = "project"
 	EntityCommentGoal    = "goal"
 	EntityCommentSprint  = "sprint"
+)
+
+// Template stores a reusable snippet of workspace data that can be
+// applied to a workspace to materialize the entities it describes.
+// Type discriminates the shape of Body: "project" templates carry a
+// Project + Sections + Tasks; "task" templates carry a single Task
+// (with optional subtasks). Variables holds {{placeholder}} names the
+// frontend prompts the user to fill in at apply time; the values are
+// substituted into string fields of Body when POST /templates/:id/apply
+// is called.
+type Template struct {
+	ID        int            `json:"id"`
+	Type      string         `json:"type"`
+	Name      string         `json:"name"`
+	Variables []string       `json:"variables,omitempty"`
+	Body      map[string]any `json:"body"`
+	CreatedAt string         `json:"createdAt"`
+	UpdatedAt string         `json:"updatedAt"`
+}
+
+const (
+	TemplateTypeProject = "project"
+	TemplateTypeTask    = "task"
+)
+
+// Rule is a single automation entry: when a Trigger fires and all
+// Conditions match, every Action runs. Actions execute in the same
+// transaction as the mutation that fired the trigger, so the
+// resulting state is atomic.
+type Rule struct {
+	ID         int             `json:"id"`
+	Name       string          `json:"name"`
+	Enabled    bool            `json:"enabled"`
+	Trigger    string          `json:"trigger"`
+	Conditions []RuleCondition `json:"conditions,omitempty"`
+	Actions    []RuleAction    `json:"actions"`
+	CreatedAt  string          `json:"createdAt"`
+	UpdatedAt  string          `json:"updatedAt"`
+}
+
+// RuleCondition compares one field against one value. Field is a dotted
+// path like "task.status" or "task.project". Op is one of: eq, ne,
+// contains, in.
+type RuleCondition struct {
+	Field string `json:"field"`
+	Op    string `json:"op"`
+	Value string `json:"value"`
+}
+
+// RuleAction is one operation applied when the rule fires. Type is one
+// of: assign_to, set_status, set_due_offset, add_tag, create_subtask,
+// post_comment, notify. Params holds the action-specific values.
+type RuleAction struct {
+	Type   string            `json:"type"`
+	Params map[string]string `json:"params,omitempty"`
+}
+
+const (
+	TriggerTaskCreated         = "task.created"
+	TriggerTaskStatusChanged   = "task.status_changed"
+	TriggerTaskAssigneeChanged = "task.assignee_changed"
+	TriggerCommentCreated      = "comment.created"
+
+	ActionAssignTo      = "assign_to"
+	ActionSetStatus     = "set_status"
+	ActionSetDueOffset  = "set_due_offset"
+	ActionAddTag        = "add_tag"
+	ActionCreateSubtask = "create_subtask"
+	ActionPostComment   = "post_comment"
+	ActionNotify        = "notify"
+
+	OpEq       = "eq"
+	OpNe       = "ne"
+	OpContains = "contains"
+	OpIn       = "in"
 )
 
 // Section is an ordered group of tasks within a project. The legacy

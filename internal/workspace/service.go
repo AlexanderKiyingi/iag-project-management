@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/iag/project-management/backend/internal/automation"
 	"github.com/iag/project-management/backend/internal/events"
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/realtime"
@@ -20,11 +21,16 @@ type Indexer interface {
 }
 
 type Service struct {
-	Repo   *store.Repository
-	Hub    *realtime.Hub
-	Redis  *realtime.RedisBridge
-	Events *events.Bus
-	Search Indexer
+	Repo       *store.Repository
+	Hub        *realtime.Hub
+	Redis      *realtime.RedisBridge
+	Events     *events.Bus
+	Search     Indexer
+	// RuleNotify is invoked post-persist for each notify action that
+	// fired during the mutation. Wired up in main.go to bus.PublishPMAlert
+	// so the resulting iag.commercial event lands in the central inbox.
+	// nil here is fine — engine simply skips notify callbacks.
+	RuleNotify automation.NotifyHook
 }
 
 func (s *Service) Mutate(ctx context.Context, userID string, fn func(*models.Document) error) (store.Workspace, error) {
@@ -38,9 +44,16 @@ func (s *Service) Mutate(ctx context.Context, userID string, fn func(*models.Doc
 		if err := json.Unmarshal(ws.Document, &doc); err != nil {
 			return store.Workspace{}, err
 		}
+		prev := cloneDocument(doc)
 		if err := fn(&doc); err != nil {
 			return store.Workspace{}, err
 		}
+		// Run the automation engine between the user's mutation and
+		// the persist step so rule-driven changes land atomically.
+		// Notifications are deferred to a post-persist callback list
+		// so we don't publish a notify event for a state that ends up
+		// rolled back on version conflict.
+		notifyCallbacks := automation.DiffAndRun(&prev, &doc, userID)
 		raw, err := json.Marshal(doc)
 		if err != nil {
 			return store.Workspace{}, err
@@ -59,12 +72,28 @@ func (s *Service) Mutate(ctx context.Context, userID string, fn func(*models.Doc
 				slog.Warn("search reindex failed", "owner", ws.OwnerUserID, "err", err)
 			}
 		}
+		for _, cb := range notifyCallbacks {
+			cb(s.RuleNotify)
+		}
 		return updated, nil
 	}
 	if lastErr != nil {
 		return store.Workspace{}, lastErr
 	}
 	return store.Workspace{}, store.ErrVersionConflict
+}
+
+// cloneDocument deep-copies a Document via JSON so the automation
+// engine can compare pre and post states without false aliasing on
+// the inner slices.
+func cloneDocument(d models.Document) models.Document {
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return models.Document{}
+	}
+	var out models.Document
+	_ = json.Unmarshal(raw, &out)
+	return out
 }
 
 // BroadcastWorkspace notifies the owner and all workspace members (shared tenancy).

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/audit"
+	"github.com/iag/project-management/backend/internal/automation"
 	"github.com/iag/project-management/backend/internal/config"
 	"github.com/iag/project-management/backend/internal/docs"
 	"github.com/iag/project-management/backend/internal/events"
@@ -32,6 +33,7 @@ type Options struct {
 	FileStore     *files.Store
 	AuditRecorder audit.Recorder
 	Search        *search.Service
+	RuleNotify    automation.NotifyHook
 }
 
 func New(opts Options) *gin.Engine {
@@ -65,11 +67,12 @@ func New(opts Options) *gin.Engine {
 
 	api := r.Group("/api/v1")
 	svc := &workspace.Service{
-		Repo:   opts.Repo,
-		Hub:    opts.Hub,
-		Redis:  opts.RedisBridge,
-		Events: opts.Events,
-		Search: opts.Search,
+		Repo:       opts.Repo,
+		Hub:        opts.Hub,
+		Redis:      opts.RedisBridge,
+		Events:     opts.Events,
+		Search:     opts.Search,
+		RuleNotify: opts.RuleNotify,
 	}
 	(&handlers.Workspace{Svc: svc, Platform: opts.PlatformAuth}).Register(api)
 	(&handlers.Entities{Svc: svc, Files: opts.FileStore}).Register(api)

@@ -47,6 +47,10 @@ tags:
   - name: realtime
   - name: search
   - name: audit
+  - name: approvals
+  - name: templates
+  - name: rules
+  - name: recurrence
 
 components:
   securitySchemes:
@@ -108,7 +112,17 @@ components:
         status: { type: string }
         done: { type: boolean }
         desc: { type: string }
-        type: { type: string, enum: [task, milestone], description: "Empty defaults to task." }
+        type: { type: string, enum: [task, milestone, approval], description: "Empty defaults to task." }
+        approvers: { type: array, items: { type: string }, description: "Required signoffs for approval-type tasks." }
+        approvedBy: { type: array, items: { type: string }, description: "Actors who have approved so far." }
+        recurrence:
+          type: object
+          nullable: true
+          properties:
+            pattern: { type: string, enum: [daily, weekly, monthly] }
+            interval: { type: integer }
+            endDate: { type: string }
+            nextDueAt: { type: string, description: "Server-managed cursor." }
         deletedAt: { type: string, description: "Set when soft-deleted; restore via POST /tasks/:id/restore." }
         subtasks: { type: array, items: { type: string }, description: "Legacy name-only mirror of Subtask entities under Document.subtaskEntities." }
         tags: { type: array, items: { type: string } }
@@ -1013,6 +1027,171 @@ paths:
     delete:
       tags: [settings]
       summary: Clear the audit log
+      responses: { '200': { description: ok } }
+
+  /api/v1/tasks/{id}/approve:
+    post:
+      tags: [approvals]
+      summary: Approve an approval-type task (X-Workspace-User must be in approvers list)
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      responses: { '200': { description: ok } }
+  /api/v1/tasks/{id}/reject:
+    post:
+      tags: [approvals]
+      summary: Reject an approval-type task (clears prior approvals)
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - $ref: '#/components/parameters/WorkspaceUser'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses: { '200': { description: ok } }
+  /api/v1/tasks/{id}/approvers:
+    patch:
+      tags: [approvals]
+      summary: Replace the approvers list on a task
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approvers: { type: array, items: { type: string } }
+              required: [approvers]
+      responses: { '200': { description: ok } }
+
+  /api/v1/templates:
+    get:
+      tags: [templates]
+      summary: List templates in the workspace
+      responses: { '200': { description: ok } }
+    post:
+      tags: [templates]
+      summary: Create a template (project|task)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: { type: string, enum: [project, task] }
+                name: { type: string }
+                variables: { type: array, items: { type: string } }
+                body: { type: object, additionalProperties: true }
+              required: [type, name, body]
+      responses: { '200': { description: ok } }
+  /api/v1/templates/{id}:
+    get:
+      tags: [templates]
+      summary: Fetch one template
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [templates]
+      summary: Delete a template
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+  /api/v1/templates/{id}/apply:
+    post:
+      tags: [templates]
+      summary: Apply a template to the current workspace with optional context substitution
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        '200':
+          description: applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied:
+                    type: object
+                    properties:
+                      projectId: { type: string }
+                      createdTaskIds: { type: array, items: { type: integer } }
+                  version: { type: integer }
+
+  /api/v1/rules:
+    get:
+      tags: [rules]
+      summary: List automation rules in the workspace
+      responses: { '200': { description: ok } }
+    post:
+      tags: [rules]
+      summary: Create a rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                enabled: { type: boolean }
+                trigger:
+                  type: string
+                  enum: [task.created, task.status_changed, task.assignee_changed, comment.created]
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field: { type: string }
+                      op: { type: string, enum: [eq, ne, contains, in] }
+                      value: { type: string }
+                actions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: [assign_to, set_status, set_due_offset, add_tag, create_subtask, post_comment, notify]
+                      params:
+                        type: object
+                        additionalProperties: { type: string }
+              required: [name, trigger, actions]
+      responses: { '200': { description: ok } }
+  /api/v1/rules/{id}:
+    patch:
+      tags: [rules]
+      summary: Patch a rule (enabled/name/trigger)
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                enabled: { type: boolean }
+                trigger: { type: string }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [rules]
+      summary: Delete a rule
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
       responses: { '200': { description: ok } }
 
   /api/v1/search:

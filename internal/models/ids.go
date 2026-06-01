@@ -52,6 +52,14 @@ func NextEntityCommentID(d *Document) int {
 	return NextIntID(len(d.EntityComments), func(i int) int { return d.EntityComments[i].ID })
 }
 
+func NextTemplateID(d *Document) int {
+	return NextIntID(len(d.Templates), func(i int) int { return d.Templates[i].ID })
+}
+
+func NextRuleID(d *Document) int {
+	return NextIntID(len(d.Rules), func(i int) int { return d.Rules[i].ID })
+}
+
 func NextRequisitionID(d *Document) int {
 	return NextIntID(len(d.Requisitions), func(i int) int { return d.Requisitions[i].ID })
 }

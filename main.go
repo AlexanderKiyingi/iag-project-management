@@ -19,6 +19,7 @@ import (
 	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 	pmdb "github.com/iag/project-management/backend/db"
 	"github.com/iag/project-management/backend/internal/audit"
+	"github.com/iag/project-management/backend/internal/automation"
 	"github.com/iag/project-management/backend/internal/config"
 	"github.com/iag/project-management/backend/internal/outbox"
 	"github.com/iag/project-management/backend/internal/search"
@@ -177,6 +178,7 @@ func main() {
 		FileStore:     fileStore,
 		AuditRecorder: auditRecorder,
 		Search:        searchSvc,
+		RuleNotify:    makeRuleNotifyHook(eventBus),
 	})
 
 	srv := &http.Server{
@@ -384,6 +386,49 @@ type outboxDispatcher struct {
 
 func (d outboxDispatcher) DispatchOutbox(ctx context.Context, row outbox.Row) error {
 	return d.bus.DispatchOutbox(ctx, row.EventType, row.EventKey, row.Payload)
+}
+
+// makeRuleNotifyHook returns a NotifyHook that translates a rule's
+// notify action into a pm.alert.raised event on iag.commercial. The
+// action's params populate the dispatch (channel, recipient, templateId,
+// and an arbitrary set of variables). The bus uses the outbox so the
+// publish is durable even if Kafka is unavailable.
+func makeRuleNotifyHook(bus *events.Bus) automation.NotifyHook {
+	if bus == nil {
+		return nil
+	}
+	return func(rule models.Rule, action models.RuleAction, evt automation.Event) {
+		recipient := action.Params["recipient"]
+		if recipient == "" {
+			return
+		}
+		channel := action.Params["channel"]
+		if channel == "" {
+			channel = "in_app"
+		}
+		templateID := action.Params["templateId"]
+		if templateID == "" {
+			templateID = "alert-in-app"
+		}
+		vars := map[string]string{
+			"ruleName": rule.Name,
+			"trigger":  evt.Type,
+		}
+		for k, v := range action.Params {
+			switch k {
+			case "channel", "recipient", "templateId":
+				continue
+			}
+			vars[k] = v
+		}
+		if evt.TaskID > 0 {
+			vars["taskId"] = fmt.Sprintf("%d", evt.TaskID)
+		}
+		if evt.New != nil {
+			vars["taskName"] = evt.New.Name
+		}
+		bus.PublishPMAlert(context.Background(), channel, recipient, templateID, vars)
+	}
 }
 
 func autoMigrate(parent context.Context, pool *pgxpool.Pool) error {

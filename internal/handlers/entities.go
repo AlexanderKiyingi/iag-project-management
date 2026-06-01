@@ -41,6 +41,20 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.POST("/tasks/:id/restore", authz, h.restoreTask)
 	rg.POST("/tasks/:id/projects", authz, h.addTaskProject)
 	rg.DELETE("/tasks/:id/projects/:projectId", authz, h.removeTaskProject)
+	rg.POST("/tasks/:id/approve", authz, h.approveTask)
+	rg.POST("/tasks/:id/reject", authz, h.rejectTask)
+	rg.PATCH("/tasks/:id/approvers", authz, h.setApprovers)
+
+	rg.GET("/templates", auth.RequireWorkspaceRead(), h.listTemplates)
+	rg.GET("/templates/:id", auth.RequireWorkspaceRead(), h.getTemplate)
+	rg.POST("/templates", authz, h.createTemplate)
+	rg.DELETE("/templates/:id", authz, h.deleteTemplate)
+	rg.POST("/templates/:id/apply", authz, h.applyTemplate)
+
+	rg.GET("/rules", auth.RequireWorkspaceRead(), h.listRules)
+	rg.POST("/rules", authz, h.createRule)
+	rg.PATCH("/rules/:id", authz, h.patchRule)
+	rg.DELETE("/rules/:id", authz, h.deleteRule)
 	rg.POST("/tasks/:id/tags", authz, h.addTaskTag)
 	rg.DELETE("/tasks/:id/tags/:tag", authz, h.removeTaskTag)
 	rg.PATCH("/tasks/:id/custom/:field", authz, h.patchTaskCustom)
@@ -317,6 +331,55 @@ func applyTaskPatch(t *models.Task, patch map[string]any) {
 	if v, ok := patch["type"].(string); ok {
 		t.Type = normalizeTaskType(v)
 	}
+	if raw, ok := patch["recurrence"]; ok {
+		applyRecurrencePatch(t, raw)
+	}
+}
+
+// applyRecurrencePatch accepts either a nil to clear the recurrence
+// spec or a map carrying {pattern, interval, endDate}. Server-managed
+// fields (nextDueAt) are recomputed from the task's due date when
+// missing so callers don't have to supply it.
+func applyRecurrencePatch(t *models.Task, raw any) {
+	if raw == nil {
+		t.Recurrence = nil
+		return
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return
+	}
+	pattern, _ := m["pattern"].(string)
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	switch pattern {
+	case "daily", "weekly", "monthly":
+	default:
+		t.Recurrence = nil
+		return
+	}
+	interval := 1
+	if v, ok := m["interval"].(float64); ok && int(v) > 0 {
+		interval = int(v)
+	}
+	rec := &models.TaskRecurrence{Pattern: pattern, Interval: interval}
+	if v, ok := m["endDate"].(string); ok {
+		rec.EndDate = strings.TrimSpace(v)
+	}
+	if v, ok := m["nextDueAt"].(string); ok && v != "" {
+		rec.NextDueAt = v
+	} else {
+		rec.NextDueAt = firstNonEmptyString(t.EndDate, t.Due, t.StartDate)
+	}
+	t.Recurrence = rec
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // normalizeTaskType accepts the supported task-type literals and falls
@@ -329,6 +392,8 @@ func normalizeTaskType(t string) string {
 		return ""
 	case models.TaskTypeMilestone:
 		return models.TaskTypeMilestone
+	case models.TaskTypeApproval:
+		return models.TaskTypeApproval
 	default:
 		return models.TaskTypeTask
 	}

@@ -25,10 +25,11 @@ import (
 func main() {
 	reminders := flag.Bool("reminders", false, "emit pm.alert.raised for message reminders and tasks due within TASK_DUE_REMINDER_DAYS")
 	archive := flag.Bool("archive", false, "trim audit, notifications, and messages from inactive chats per retention env vars")
+	recurrence := flag.Bool("recurrence", false, "clone tasks whose Recurrence cursor is due")
 	flag.Parse()
 
-	if !*reminders && !*archive {
-		fmt.Fprintln(os.Stderr, "specify --reminders or --archive")
+	if !*reminders && !*archive && !*recurrence {
+		fmt.Fprintln(os.Stderr, "specify --reminders, --archive, or --recurrence")
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -54,6 +55,11 @@ func main() {
 	if *archive {
 		if _, err := jobs.RunArchive(ctx, repo, jobs.DefaultArchiveConfig()); err != nil {
 			log.Fatalf("archive: %v", err)
+		}
+	}
+	if *recurrence {
+		if _, err := jobs.RunRecurrence(ctx, repo); err != nil {
+			log.Fatalf("recurrence: %v", err)
 		}
 	}
 }
