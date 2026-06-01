@@ -18,7 +18,10 @@ import (
 	"github.com/alvor-technologies/iag-authclient"
 	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 	pmdb "github.com/iag/project-management/backend/db"
+	"github.com/iag/project-management/backend/internal/audit"
 	"github.com/iag/project-management/backend/internal/config"
+	"github.com/iag/project-management/backend/internal/outbox"
+	"github.com/iag/project-management/backend/internal/search"
 	pgdb "github.com/iag/project-management/backend/internal/db"
 	pmconsumer "github.com/iag/project-management/backend/internal/consumer"
 	"github.com/iag/project-management/backend/internal/events"
@@ -119,6 +122,18 @@ func main() {
 		slog.Info("event bus enabled", "brokers", cfg.KafkaBrokers)
 	}
 
+	// Outbox: every publish now writes a pm_event_outbox row first; the
+	// background publisher drains and Kafka-writes with backoff. Closes
+	// the lost-event window when Kafka or the network blips after a
+	// handler's DB commit.
+	outboxStore := outbox.NewStore(pool)
+	eventBus.SetOutbox(outboxStore)
+	if eventBus.Enabled() {
+		outboxPublisher := outbox.NewPublisher(outboxStore, outboxDispatcher{bus: eventBus})
+		go outboxPublisher.Run(ctx)
+		slog.Info("outbox publisher started")
+	}
+
 	go remindersLoop(ctx, repo, eventBus, cfg.RemindersInterval)
 	go archiveLoop(ctx, repo, cfg.ArchiveInterval)
 
@@ -147,14 +162,21 @@ func main() {
 
 	fileStore := files.NewStore(pool, cfg.UploadDir)
 
+	auditRecorder := audit.NewPgxRecorder(pool, 0)
+	defer auditRecorder.Close()
+
+	searchSvc := search.New(pool)
+
 	engine := router.New(router.Options{
-		Cfg:          cfg,
-		PlatformAuth: platformAuth,
-		Repo:         repo,
-		Hub:          hub,
-		RedisBridge:  redisBridge,
-		Events:       eventBus,
-		FileStore:    fileStore,
+		Cfg:           cfg,
+		PlatformAuth:  platformAuth,
+		Repo:          repo,
+		Hub:           hub,
+		RedisBridge:   redisBridge,
+		Events:        eventBus,
+		FileStore:     fileStore,
+		AuditRecorder: auditRecorder,
+		Search:        searchSvc,
 	})
 
 	srv := &http.Server{
@@ -351,6 +373,17 @@ func remindersLoop(ctx context.Context, repo *store.Repository, bus *events.Bus,
 			cancel()
 		}
 	}
+}
+
+// outboxDispatcher adapts an *events.Bus to the outbox.Dispatcher
+// interface. The Bus method takes (eventType, key, payload) so the
+// adapter pulls those fields off the queued Row.
+type outboxDispatcher struct {
+	bus *events.Bus
+}
+
+func (d outboxDispatcher) DispatchOutbox(ctx context.Context, row outbox.Row) error {
+	return d.bus.DispatchOutbox(ctx, row.EventType, row.EventKey, row.Payload)
 }
 
 func autoMigrate(parent context.Context, pool *pgxpool.Pool) error {

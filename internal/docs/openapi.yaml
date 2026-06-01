@@ -45,6 +45,8 @@ tags:
   - name: workload
   - name: settings
   - name: realtime
+  - name: search
+  - name: audit
 
 components:
   securitySchemes:
@@ -1012,6 +1014,83 @@ paths:
       tags: [settings]
       summary: Clear the audit log
       responses: { '200': { description: ok } }
+
+  /api/v1/search:
+    get:
+      tags: [search]
+      summary: Full-text search across tasks, projects, goals, messages
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string }
+        - in: query
+          name: type
+          schema: { type: string, enum: [task, project, goal, message] }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 200 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: ranked hits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        entityType: { type: string }
+                        entityId: { type: string }
+                        projectId: { type: string }
+                        title: { type: string }
+                        snippet: { type: string }
+                        rank: { type: number }
+                  total: { type: integer }
+
+  /api/v1/audit/requests:
+    get:
+      tags: [audit]
+      summary: HTTP request audit log (admin only)
+      parameters:
+        - in: query
+          name: workspaceOwnerUserId
+          schema: { type: string }
+        - in: query
+          name: actor
+          schema: { type: string }
+        - in: query
+          name: path
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100, maximum: 500 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: rows
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { type: object } }
+                  limit: { type: integer }
+                  offset: { type: integer }
 
   /api/v1/platform/status:
     get:

@@ -30,6 +30,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+// Pool exposes the underlying pgx pool for adapters (audit, search, outbox)
+// that need direct database access alongside the workspace store.
+func (r *Repository) Pool() *pgxpool.Pool {
+	return r.pool
+}
+
 func (r *Repository) GetOrCreate(ctx context.Context, ownerUserID string) (Workspace, error) {
 	ws, err := r.get(ctx, ownerUserID)
 	if err == nil {

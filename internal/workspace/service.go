@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 
 	"github.com/iag/project-management/backend/internal/events"
 	"github.com/iag/project-management/backend/internal/models"
@@ -11,11 +12,19 @@ import (
 	"github.com/iag/project-management/backend/internal/store"
 )
 
+// Indexer is the search-index hook called after every successful
+// mutation. Satisfied by *search.Service; declared as an interface
+// here so workspace doesn't import search and create a cycle.
+type Indexer interface {
+	Reindex(ctx context.Context, ownerUserID string, doc models.Document) error
+}
+
 type Service struct {
 	Repo   *store.Repository
 	Hub    *realtime.Hub
 	Redis  *realtime.RedisBridge
 	Events *events.Bus
+	Search Indexer
 }
 
 func (s *Service) Mutate(ctx context.Context, userID string, fn func(*models.Document) error) (store.Workspace, error) {
@@ -45,6 +54,11 @@ func (s *Service) Mutate(ctx context.Context, userID string, fn func(*models.Doc
 			return store.Workspace{}, err
 		}
 		s.BroadcastWorkspace(ctx, updated)
+		if s.Search != nil {
+			if err := s.Search.Reindex(ctx, ws.OwnerUserID, doc); err != nil {
+				slog.Warn("search reindex failed", "owner", ws.OwnerUserID, "err", err)
+			}
+		}
 		return updated, nil
 	}
 	if lastErr != nil {

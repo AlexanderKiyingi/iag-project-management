@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/iag/project-management/backend/internal/audit"
 	"github.com/iag/project-management/backend/internal/config"
 	"github.com/iag/project-management/backend/internal/docs"
 	"github.com/iag/project-management/backend/internal/events"
@@ -16,18 +17,21 @@ import (
 	"github.com/iag/project-management/backend/internal/handlers"
 	"github.com/iag/project-management/backend/internal/middleware"
 	"github.com/iag/project-management/backend/internal/realtime"
+	"github.com/iag/project-management/backend/internal/search"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
 )
 
 type Options struct {
-	Cfg          config.Config
-	PlatformAuth *middleware.PlatformAuth
-	Repo         *store.Repository
-	Hub          *realtime.Hub
-	RedisBridge  *realtime.RedisBridge
-	Events       *events.Bus
-	FileStore    *files.Store
+	Cfg           config.Config
+	PlatformAuth  *middleware.PlatformAuth
+	Repo          *store.Repository
+	Hub           *realtime.Hub
+	RedisBridge   *realtime.RedisBridge
+	Events        *events.Bus
+	FileStore     *files.Store
+	AuditRecorder audit.Recorder
+	Search        *search.Service
 }
 
 func New(opts Options) *gin.Engine {
@@ -55,6 +59,9 @@ func New(opts Options) *gin.Engine {
 	if opts.PlatformAuth != nil {
 		r.Use(opts.PlatformAuth.AttachPrincipal())
 	}
+	if opts.AuditRecorder != nil {
+		r.Use(audit.NewMiddleware(opts.AuditRecorder))
+	}
 
 	api := r.Group("/api/v1")
 	svc := &workspace.Service{
@@ -62,10 +69,13 @@ func New(opts Options) *gin.Engine {
 		Hub:    opts.Hub,
 		Redis:  opts.RedisBridge,
 		Events: opts.Events,
+		Search: opts.Search,
 	}
 	(&handlers.Workspace{Svc: svc, Platform: opts.PlatformAuth}).Register(api)
 	(&handlers.Entities{Svc: svc, Files: opts.FileStore}).Register(api)
 	(&handlers.PlatformStatus{Cfg: opts.Cfg, Repo: opts.Repo}).Register(api)
+	(&handlers.Audit{Pool: opts.Repo.Pool()}).Register(api)
+	(&handlers.Search{Svc: opts.Search}).Register(api)
 
 	return r
 }
