@@ -29,6 +29,13 @@ func TestSpecMarshalsToJSON(t *testing.T) {
 		"/api/v1/messages/{id}/reactions",
 		"/api/v1/tasks/{id}/subtasks",
 		"/api/v1/tasks/bulk",
+		"/api/v1/tasks/{id}/projects",
+		"/api/v1/projects/{id}/status",
+		"/api/v1/goals/{id}/key-results",
+		"/api/v1/projects/{id}/sections",
+		"/api/v1/workspace/workload",
+		"/api/v1/entity-comments/{id}",
+		"/api/v1/custom-fields/{id}",
 	}
 	for _, p := range mustHave {
 		if _, ok := paths[p]; !ok {

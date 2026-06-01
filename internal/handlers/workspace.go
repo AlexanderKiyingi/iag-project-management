@@ -11,6 +11,7 @@ import (
 
 	"github.com/iag/project-management/backend/internal/auth"
 	"github.com/iag/project-management/backend/internal/middleware"
+	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
 )
@@ -41,9 +42,78 @@ func (h *Workspace) get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
 		return
 	}
-	var data any
-	_ = json.Unmarshal(ws.Document, &data)
-	c.JSON(http.StatusOK, gin.H{"data": data, "version": ws.Version})
+	var doc models.Document
+	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode workspace"})
+		return
+	}
+	applyProjectVisibility(&doc, uid)
+	c.JSON(http.StatusOK, gin.H{"data": doc, "version": ws.Version})
+}
+
+// applyProjectVisibility removes private projects (and tasks anchored
+// to them) from the view returned to a caller who is not a member of
+// those projects. The legacy Project.Visibility="workspace" stays
+// visible to everyone; an empty Visibility is treated as workspace too.
+// The workspace owner sees every project regardless of MemberIDs.
+func applyProjectVisibility(doc *models.Document, viewer string) {
+	if doc == nil || len(doc.Projects) == 0 {
+		return
+	}
+	hidden := map[string]struct{}{}
+	for id, p := range doc.Projects {
+		if p.Visibility != models.ProjectVisibilityMembersOnly {
+			continue
+		}
+		if memberIDsContain(p.MemberIDs, viewer) {
+			continue
+		}
+		hidden[id] = struct{}{}
+	}
+	if len(hidden) == 0 {
+		return
+	}
+	for id := range hidden {
+		delete(doc.Projects, id)
+	}
+	if len(doc.Tasks) > 0 {
+		kept := doc.Tasks[:0]
+		for _, t := range doc.Tasks {
+			if taskVisibleAfterHiding(t, hidden) {
+				kept = append(kept, t)
+			}
+		}
+		doc.Tasks = kept
+	}
+}
+
+// taskVisibleAfterHiding reports whether a task remains visible given a
+// set of project IDs the viewer cannot see. A multi-homed task stays
+// visible as long as at least one of its projects is not hidden. A task
+// with no projects at all stays visible (legacy back-compat).
+func taskVisibleAfterHiding(t models.Task, hidden map[string]struct{}) bool {
+	if len(t.Projects) == 0 {
+		if t.Project == "" {
+			return true
+		}
+		_, drop := hidden[t.Project]
+		return !drop
+	}
+	for _, p := range t.Projects {
+		if _, drop := hidden[p]; !drop {
+			return true
+		}
+	}
+	return false
+}
+
+func memberIDsContain(ids []string, viewer string) bool {
+	for _, id := range ids {
+		if id == viewer {
+			return true
+		}
+	}
+	return false
 }
 
 type putBody struct {

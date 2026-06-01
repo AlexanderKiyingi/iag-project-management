@@ -25,18 +25,24 @@ tags:
   - name: workspace
   - name: tasks
   - name: subtasks
+  - name: sections
   - name: tags
   - name: dependencies
   - name: comments
+  - name: entity-comments
   - name: goals
+  - name: key-results
   - name: sprints
   - name: chats
   - name: messages
   - name: reactions
   - name: projects
+  - name: project-status
+  - name: custom-fields
   - name: requisitions
   - name: files
   - name: members
+  - name: workload
   - name: settings
   - name: realtime
 
@@ -88,8 +94,10 @@ components:
       properties:
         id: { type: integer }
         name: { type: string }
-        project: { type: string }
+        project: { type: string, description: "Legacy mirror of projects[0]. Both fields stay in sync." }
+        projects: { type: array, items: { type: string }, description: "Multi-homed project IDs; first element mirrors `project`." }
         section: { type: string }
+        sectionId: { type: integer }
         assignee: { type: string }
         due: { type: string, description: "Legacy single-date field; for new code prefer startDate/endDate." }
         startDate: { type: string }
@@ -98,11 +106,66 @@ components:
         status: { type: string }
         done: { type: boolean }
         desc: { type: string }
+        type: { type: string, enum: [task, milestone], description: "Empty defaults to task." }
+        deletedAt: { type: string, description: "Set when soft-deleted; restore via POST /tasks/:id/restore." }
         subtasks: { type: array, items: { type: string }, description: "Legacy name-only mirror of Subtask entities under Document.subtaskEntities." }
         tags: { type: array, items: { type: string } }
         dependsOn: { type: array, items: { type: integer } }
         sprintId: { type: integer }
         customValues: { type: object, additionalProperties: { type: string } }
+    Section:
+      type: object
+      properties:
+        id: { type: integer }
+        projectId: { type: string }
+        name: { type: string }
+        order: { type: integer }
+      required: [id, projectId, name]
+    KeyResult:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        metric: { type: string }
+        current: { type: number }
+        target: { type: number }
+        unit: { type: string }
+      required: [id, name, target]
+    EntityComment:
+      type: object
+      properties:
+        id: { type: integer }
+        entityType: { type: string, enum: [project, goal, sprint] }
+        entityId: { type: string }
+        author: { type: string }
+        text: { type: string }
+        mentions: { type: array, items: { type: string } }
+        time: { type: string }
+    ProjectStatusUpdate:
+      type: object
+      properties:
+        id: { type: integer }
+        author: { type: string }
+        status: { type: string, enum: [on_track, at_risk, off_track] }
+        summary: { type: string }
+        time: { type: string }
+    MemberWorkload:
+      type: object
+      properties:
+        userId: { type: string }
+        initials: { type: string }
+        name: { type: string }
+        openTasks: { type: integer }
+        dueInWindow: { type: integer }
+        overdue: { type: integer }
+    CustomFieldDef:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [text, number, date, select, multi_select, people] }
+        options: { type: array, items: { type: string } }
+      required: [id, name, type]
     Subtask:
       type: object
       properties:
@@ -476,6 +539,286 @@ paths:
       parameters: [{ $ref: '#/components/parameters/EntityID' }]
       responses:
         '200': { description: ok }
+
+  /api/v1/tasks/{id}/restore:
+    post:
+      tags: [tasks]
+      summary: Restore a soft-deleted task
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+  /api/v1/tasks/{id}/projects:
+    post:
+      tags: [tasks]
+      summary: Add a project to a task (multi-home)
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                projectId: { type: string }
+              required: [projectId]
+      responses: { '200': { description: ok } }
+  /api/v1/tasks/{id}/projects/{projectId}:
+    delete:
+      tags: [tasks]
+      summary: Remove a project from a task
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - in: path
+          name: projectId
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: ok } }
+
+  /api/v1/sections/{id}:
+    patch:
+      tags: [sections]
+      summary: Rename or reorder a section
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                order: { type: integer }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [sections]
+      summary: Delete a section
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /api/v1/custom-fields/{id}:
+    put:
+      tags: [custom-fields]
+      summary: Create or update a typed custom field definition
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomFieldDef' }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [custom-fields]
+      summary: Delete a custom field (clears values across all tasks)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: ok } }
+
+  /api/v1/workspace/workload:
+    get:
+      tags: [workload]
+      summary: Per-member workload counts (open tasks, due-in-window, overdue)
+      parameters:
+        - in: query
+          name: period
+          schema: { type: string, enum: [day, week, month] }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workload: { type: array, items: { $ref: '#/components/schemas/MemberWorkload' } }
+                  windowDays: { type: integer }
+
+  /api/v1/projects/{id}/sections:
+    post:
+      tags: [sections]
+      summary: Create a section under a project
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+              required: [name]
+      responses: { '200': { description: ok } }
+  /api/v1/projects/{id}/sections/reorder:
+    post:
+      tags: [sections]
+      summary: Reorder a project's sections
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                order: { type: array, items: { type: integer } }
+              required: [order]
+      responses: { '200': { description: ok } }
+  /api/v1/projects/{id}/status:
+    post:
+      tags: [project-status]
+      summary: Post a status update on a project
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [on_track, at_risk, off_track] }
+                summary: { type: string }
+              required: [status]
+      responses: { '200': { description: ok } }
+    get:
+      tags: [project-status]
+      summary: List a project's status history (newest first)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statusHistory:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProjectStatusUpdate' }
+  /api/v1/projects/{id}/comments:
+    post:
+      tags: [entity-comments]
+      summary: Comment on a project
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+              required: [text]
+      responses: { '200': { description: ok } }
+  /api/v1/goals/{id}/comments:
+    post:
+      tags: [entity-comments]
+      summary: Comment on a goal
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+              required: [text]
+      responses: { '200': { description: ok } }
+  /api/v1/sprints/{id}/comments:
+    post:
+      tags: [entity-comments]
+      summary: Comment on a sprint
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+              required: [text]
+      responses: { '200': { description: ok } }
+  /api/v1/entity-comments/{id}:
+    delete:
+      tags: [entity-comments]
+      summary: Delete a polymorphic comment (project/goal/sprint)
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      responses: { '200': { description: ok } }
+
+  /api/v1/goals/{id}/key-results:
+    post:
+      tags: [key-results]
+      summary: Add a Key Result to a Goal (OKR)
+      parameters: [{ $ref: '#/components/parameters/EntityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                metric: { type: string }
+                current: { type: number }
+                target: { type: number }
+                unit: { type: string }
+              required: [name, target]
+      responses: { '200': { description: ok } }
+  /api/v1/goals/{id}/key-results/{krId}:
+    patch:
+      tags: [key-results]
+      summary: Patch a Key Result (recomputes goal progress)
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - in: path
+          name: krId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KeyResult' }
+      responses: { '200': { description: ok } }
+    delete:
+      tags: [key-results]
+      summary: Delete a Key Result
+      parameters:
+        - $ref: '#/components/parameters/EntityID'
+        - in: path
+          name: krId
+          required: true
+          schema: { type: integer }
+      responses: { '200': { description: ok } }
 
   /api/v1/goals:
     post:

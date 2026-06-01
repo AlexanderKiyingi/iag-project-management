@@ -16,6 +16,8 @@ type Document struct {
 	Files                []WorkspaceFile        `json:"files"`
 	TaskComments         []TaskComment          `json:"taskComments"`
 	Subtasks             []Subtask              `json:"subtaskEntities,omitempty"`
+	Sections             []Section              `json:"sectionEntities,omitempty"`
+	EntityComments       []EntityComment        `json:"entityComments,omitempty"`
 	TaskCustomFieldDefs  []TaskCustomFieldDef   `json:"taskCustomFieldDefs"`
 	TaskListColumns      map[string]bool        `json:"taskListColumns"`
 	SidebarCollapsed     bool                   `json:"sidebarCollapsed"`
@@ -27,19 +29,56 @@ type Document struct {
 }
 
 type Project struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Color  string `json:"color"`
-	Icon   string `json:"icon"`
-	Status string `json:"status"`
-	Code   string `json:"code"`
+	ID            string                `json:"id"`
+	Name          string                `json:"name"`
+	Color         string                `json:"color"`
+	Icon          string                `json:"icon"`
+	Status        string                `json:"status"`
+	Code          string                `json:"code"`
+	StatusHistory []ProjectStatusUpdate `json:"statusHistory,omitempty"`
+	// Visibility controls which workspace members can see the project
+	// in the document. Empty string defaults to ProjectVisibilityWorkspace
+	// (everyone in the workspace, the legacy behaviour). When
+	// ProjectVisibilityMembersOnly, only users whose userId appears in
+	// MemberIDs see the project; tasks anchored to a hidden project are
+	// filtered out of GET /workspace responses too.
+	Visibility    string                `json:"visibility,omitempty"`
+	MemberIDs     []string              `json:"memberIds,omitempty"`
 }
+
+const (
+	ProjectVisibilityWorkspace   = "workspace"
+	ProjectVisibilityMembersOnly = "members_only"
+)
+
+// ProjectStatusUpdate is a single point-in-time status report posted
+// against a project. Newest entries are at the tail of StatusHistory so
+// the legacy Project.Status mirror always reflects the most recent
+// update.
+type ProjectStatusUpdate struct {
+	ID      int    `json:"id"`
+	Author  string `json:"author"`
+	Status  string `json:"status"` // on_track | at_risk | off_track
+	Summary string `json:"summary"`
+	Time    string `json:"time"`
+}
+
+const (
+	ProjectStatusOnTrack  = "on_track"
+	ProjectStatusAtRisk   = "at_risk"
+	ProjectStatusOffTrack = "off_track"
+)
 
 type Task struct {
 	ID           int               `json:"id"`
 	Name         string            `json:"name"`
 	Project      string            `json:"project"`
+	// Projects holds every project the task is multi-homed in. The
+	// legacy `Project` field stays in sync with Projects[0] on
+	// every mutation so older frontends keep working unchanged.
+	Projects     []string          `json:"projects,omitempty"`
 	Section      string            `json:"section"`
+	SectionID    int               `json:"sectionId,omitempty"`
 	Assignee     string            `json:"assignee"`
 	Due          string            `json:"due"`
 	StartDate    string            `json:"startDate,omitempty"`
@@ -48,13 +87,23 @@ type Task struct {
 	Status       string            `json:"status"`
 	Done         bool              `json:"done"`
 	Desc         string            `json:"desc"`
+	// Type discriminates rendering. Empty string and "task" both mean a
+	// normal task; "milestone" is a point-in-time marker (renders without
+	// a duration in timeline/Gantt views even if startDate is set).
+	Type         string            `json:"type,omitempty"`
 	Subtasks     []string          `json:"subtasks"`
 	Tags         []string          `json:"tags"`
 	DependsOn    []int             `json:"dependsOn"`
 	SprintID     int               `json:"sprintId"`
 	CustomValues map[string]string `json:"customValues"`
 	Activity     []ActivityEntry   `json:"activity"`
+	DeletedAt    string            `json:"deletedAt,omitempty"`
 }
+
+const (
+	TaskTypeTask      = "task"
+	TaskTypeMilestone = "milestone"
+)
 
 type ActivityEntry struct {
 	Text string `json:"text"`
@@ -62,12 +111,25 @@ type ActivityEntry struct {
 }
 
 type Goal struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Progress int    `json:"progress"`
-	Status   string `json:"status"`
-	Period   string `json:"period"`
-	Team     string `json:"team"`
+	ID          int          `json:"id"`
+	Name        string       `json:"name"`
+	Progress    int          `json:"progress"`
+	Status      string       `json:"status"`
+	Period      string       `json:"period"`
+	Team        string       `json:"team"`
+	KeyResults  []KeyResult  `json:"keyResults,omitempty"`
+}
+
+// KeyResult is an OKR-style measurable outcome attached to a Goal.
+// When a Goal has any KeyResults, the parent Goal.Progress is recomputed
+// as the average of each KR's percentage (current / target).
+type KeyResult struct {
+	ID      int     `json:"id"`
+	Name    string  `json:"name"`
+	Metric  string  `json:"metric,omitempty"`
+	Current float64 `json:"current"`
+	Target  float64 `json:"target"`
+	Unit    string  `json:"unit,omitempty"`
 }
 
 type Sprint struct {
@@ -188,6 +250,37 @@ type TaskComment struct {
 	Time     string   `json:"time"`
 }
 
+// EntityComment is the polymorphic comment for non-task entities
+// (projects, goals, sprints). EntityID is a string to accommodate both
+// string-keyed projects and integer-keyed goals/sprints — handlers
+// validate the id shape per EntityType before persisting.
+type EntityComment struct {
+	ID         int      `json:"id"`
+	EntityType string   `json:"entityType"`
+	EntityID   string   `json:"entityId"`
+	Author     string   `json:"author"`
+	Text       string   `json:"text"`
+	Mentions   []string `json:"mentions,omitempty"`
+	Time       string   `json:"time"`
+}
+
+const (
+	EntityCommentProject = "project"
+	EntityCommentGoal    = "goal"
+	EntityCommentSprint  = "sprint"
+)
+
+// Section is an ordered group of tasks within a project. The legacy
+// Task.Section string field is kept as a name mirror so existing
+// frontends keep working; section CRUD updates both. Future task
+// patches that include sectionId override the legacy string.
+type Section struct {
+	ID        int    `json:"id"`
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+	Order     int    `json:"order"`
+}
+
 // Subtask is a first-class entity belonging to a parent Task. The legacy
 // Task.Subtasks []string field is kept as a name-only mirror so existing
 // frontends keep working; create/delete handlers update both.
@@ -206,6 +299,33 @@ type TaskCustomFieldDef struct {
 	Name    string   `json:"name"`
 	Type    string   `json:"type"`
 	Options []string `json:"options"`
+}
+
+const (
+	CustomFieldTypeText        = "text"
+	CustomFieldTypeNumber      = "number"
+	CustomFieldTypeDate        = "date"
+	CustomFieldTypeSelect      = "select"
+	CustomFieldTypeMultiSelect = "multi_select"
+	CustomFieldTypePeople      = "people"
+)
+
+// ValidCustomFieldType reports whether t is one of the recognised
+// CustomFieldType* constants. The empty string is treated as "text" by
+// callers (back-compat with legacy untyped fields).
+func ValidCustomFieldType(t string) bool {
+	switch t {
+	case "",
+		CustomFieldTypeText,
+		CustomFieldTypeNumber,
+		CustomFieldTypeDate,
+		CustomFieldTypeSelect,
+		CustomFieldTypeMultiSelect,
+		CustomFieldTypePeople:
+		return true
+	default:
+		return false
+	}
 }
 
 type Member struct {

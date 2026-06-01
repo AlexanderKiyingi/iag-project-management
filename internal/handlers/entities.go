@@ -30,18 +30,30 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.DELETE("/audit", authz, h.deleteAudit)
 	rg.PATCH("/settings", authz, h.patchSettings)
 
+	rg.GET("/tasks", auth.RequireWorkspaceRead(), h.listTasksPaged)
+	rg.GET("/messages", auth.RequireWorkspaceRead(), h.listMessagesPaged)
 	rg.POST("/tasks", authz, h.createTask)
 	rg.PATCH("/tasks/:id", authz, h.patchTask)
 	rg.POST("/tasks/bulk", authz, h.createTasksBulk)
 	rg.POST("/tasks/bulk-patch", authz, h.patchTasksBulk)
 	rg.POST("/tasks/delete-batch", authz, h.deleteTasksBatch)
+	rg.DELETE("/tasks/:id", authz, h.deleteTask)
+	rg.POST("/tasks/:id/restore", authz, h.restoreTask)
+	rg.POST("/tasks/:id/projects", authz, h.addTaskProject)
+	rg.DELETE("/tasks/:id/projects/:projectId", authz, h.removeTaskProject)
 	rg.POST("/tasks/:id/tags", authz, h.addTaskTag)
 	rg.DELETE("/tasks/:id/tags/:tag", authz, h.removeTaskTag)
 	rg.PATCH("/tasks/:id/custom/:field", authz, h.patchTaskCustom)
+	rg.PUT("/custom-fields/:id", authz, h.putCustomField)
+	rg.DELETE("/custom-fields/:id", authz, h.deleteCustomField)
 	rg.POST("/tasks/:id/deps", authz, h.addTaskDep)
 	rg.DELETE("/tasks/:id/deps/:depId", authz, h.removeTaskDep)
 	rg.POST("/tasks/:id/comments", authz, h.addTaskComment)
 	rg.DELETE("/comments/:id", authz, h.deleteTaskComment)
+	rg.POST("/projects/:id/comments", authz, h.addEntityCommentProject)
+	rg.POST("/goals/:id/comments", authz, h.addEntityCommentGoal)
+	rg.POST("/sprints/:id/comments", authz, h.addEntityCommentSprint)
+	rg.DELETE("/entity-comments/:id", authz, h.deleteEntityComment)
 	rg.POST("/tasks/:id/subtasks", authz, h.createSubtask)
 	rg.POST("/tasks/:id/subtasks/reorder", authz, h.reorderSubtasks)
 	rg.PATCH("/subtasks/:id", authz, h.patchSubtask)
@@ -51,6 +63,9 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.PATCH("/goals/:id", authz, h.patchGoal)
 	rg.DELETE("/goals/:id", authz, h.deleteGoal)
 	rg.POST("/goals/:id/progress", authz, h.goalProgress)
+	rg.POST("/goals/:id/key-results", authz, h.addKeyResult)
+	rg.PATCH("/goals/:id/key-results/:krId", authz, h.patchKeyResult)
+	rg.DELETE("/goals/:id/key-results/:krId", authz, h.deleteKeyResult)
 
 	rg.POST("/sprints", authz, h.createSprint)
 	rg.PATCH("/sprints/:id", authz, h.patchSprint)
@@ -66,10 +81,17 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.POST("/files", authz, h.createFile)
 	rg.GET("/files/:id", auth.RequireWorkspaceRead(), h.getFile)
 	rg.PUT("/projects/:id", authz, h.putProject)
+	rg.POST("/projects/:id/status", authz, h.postProjectStatus)
+	rg.GET("/projects/:id/status", auth.RequireWorkspaceRead(), h.listProjectStatus)
+	rg.POST("/projects/:id/sections", authz, h.createSection)
+	rg.POST("/projects/:id/sections/reorder", authz, h.reorderSections)
+	rg.PATCH("/sections/:id", authz, h.patchSection)
+	rg.DELETE("/sections/:id", authz, h.deleteSection)
 	rg.POST("/requisitions", authz, h.createRequisition)
 
 	rg.POST("/workspace/members", authz, auth.RequirePerm("pm.admin"), h.addMember)
 	rg.PATCH("/workspace/org", authz, auth.RequirePerm("pm.admin"), h.setOrg)
+	rg.GET("/workspace/workload", auth.RequireWorkspaceRead(), h.workspaceWorkload)
 }
 
 func (h *Entities) deleteAudit(c *gin.Context) {
@@ -129,6 +151,7 @@ func (h *Entities) createTask(c *gin.Context) {
 		Due       string `json:"due"`
 		StartDate string `json:"startDate"`
 		EndDate   string `json:"endDate"`
+		Type      string `json:"type"`
 		SprintID  *int   `json:"sprintId"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" {
@@ -157,6 +180,7 @@ func (h *Entities) createTask(c *gin.Context) {
 			Due:       in.Due,
 			StartDate: in.StartDate,
 			EndDate:   in.EndDate,
+			Type:      normalizeTaskType(in.Type),
 			Status:    "on_track",
 			Tags:      []string{},
 			DependsOn: []int{},
@@ -164,6 +188,7 @@ func (h *Entities) createTask(c *gin.Context) {
 			CustomValues: map[string]string{},
 			Activity:  []models.ActivityEntry{},
 		}
+		normalizeTaskProjects(&created)
 		if in.Desc != "" {
 			created.Desc = in.Desc
 		}
@@ -259,9 +284,26 @@ func applyTaskPatch(t *models.Task, patch map[string]any) {
 	}
 	if v, ok := patch["project"].(string); ok {
 		t.Project = v
+		t.Projects = nil
+		normalizeTaskProjects(t)
+	}
+	if raw, ok := patch["projects"]; ok {
+		if arr, ok := raw.([]any); ok {
+			ps := make([]string, 0, len(arr))
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					ps = append(ps, s)
+				}
+			}
+			t.Projects = ps
+			normalizeTaskProjects(t)
+		}
 	}
 	if v, ok := patch["section"].(string); ok {
 		t.Section = v
+	}
+	if v, ok := patch["sectionId"].(float64); ok {
+		t.SectionID = int(v)
 	}
 	if v, ok := patch["status"].(string); ok {
 		t.Status = v
@@ -271,6 +313,24 @@ func applyTaskPatch(t *models.Task, patch map[string]any) {
 	}
 	if v, ok := patch["sprintId"].(float64); ok {
 		t.SprintID = int(v)
+	}
+	if v, ok := patch["type"].(string); ok {
+		t.Type = normalizeTaskType(v)
+	}
+}
+
+// normalizeTaskType accepts the supported task-type literals and falls
+// back to an empty string (treated as TaskTypeTask by callers) for
+// anything else. Empty input stays empty so that absence isn't coerced
+// into a value when patching.
+func normalizeTaskType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "":
+		return ""
+	case models.TaskTypeMilestone:
+		return models.TaskTypeMilestone
+	default:
+		return models.TaskTypeTask
 	}
 }
 
@@ -284,6 +344,7 @@ type bulkTaskInput struct {
 	Due       string `json:"due"`
 	StartDate string `json:"startDate"`
 	EndDate   string `json:"endDate"`
+	Type      string `json:"type"`
 	SprintID  *int   `json:"sprintId"`
 }
 
@@ -325,6 +386,7 @@ func (h *Entities) createTasksBulk(c *gin.Context) {
 				Due:          in.Due,
 				StartDate:    in.StartDate,
 				EndDate:      in.EndDate,
+				Type:         normalizeTaskType(in.Type),
 				Status:       "on_track",
 				Tags:         []string{},
 				DependsOn:    []int{},
@@ -332,6 +394,7 @@ func (h *Entities) createTasksBulk(c *gin.Context) {
 				CustomValues: map[string]string{},
 				Activity:     []models.ActivityEntry{},
 			}
+			normalizeTaskProjects(&t)
 			d.Tasks = append(d.Tasks, t)
 			tid := t.ID
 			models.AppendAudit(d, actor, "task.created", fmt.Sprintf("created task %q (bulk)", in.Name), &tid)
@@ -434,18 +497,30 @@ func (h *Entities) deleteTasksBatch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
+	// Default is hard-delete to preserve the prior contract; soft-delete is
+	// opt-in via ?soft=true so callers can move bulk delete onto the new
+	// reversible semantics when ready.
+	soft := c.Query("soft") == "true"
 	remove := map[int]bool{}
 	for _, id := range body.IDs {
 		remove[id] = true
 	}
+	actor := c.GetHeader("X-Workspace-User")
 	mutate(c, h.Svc, func(d *models.Document) error {
-		out := d.Tasks[:0]
-		for _, t := range d.Tasks {
-			if !remove[t.ID] {
-				out = append(out, t)
+		if soft {
+			now := models.ISONow()
+			for i := range d.Tasks {
+				if remove[d.Tasks[i].ID] {
+					d.Tasks[i].DeletedAt = now
+				}
 			}
+			models.AppendAudit(d, actor, "task.soft_deleted",
+				fmt.Sprintf("soft-deleted %d tasks (bulk)", len(remove)), nil)
+			return nil
 		}
-		d.Tasks = out
+		cascadeRemoveTasks(d, remove)
+		models.AppendAudit(d, actor, "task.deleted",
+			fmt.Sprintf("hard-deleted %d tasks (bulk)", len(remove)), nil)
 		return nil
 	})
 }
@@ -505,6 +580,27 @@ func (h *Entities) patchTaskCustom(c *gin.Context) {
 		Value string `json:"value"`
 	}
 	_ = c.ShouldBindJSON(&body)
+	uid, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	// Type-validate against the field def before locking the workspace
+	// to avoid version-bumping for invalid input.
+	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		return
+	}
+	for _, def := range doc.TaskCustomFieldDefs {
+		if def.ID != field {
+			continue
+		}
+		if msg := validateCustomFieldValue(def, body.Value); msg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+			return
+		}
+		break
+	}
 	mutate(c, h.Svc, func(d *models.Document) error {
 		for i := range d.Tasks {
 			if d.Tasks[i].ID != taskID {
@@ -777,12 +873,25 @@ func (h *Entities) deleteSprint(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	mutate(c, h.Svc, func(d *models.Document) error {
 		out := d.Sprints[:0]
+		removed := false
 		for _, s := range d.Sprints {
-			if s.ID != id {
-				out = append(out, s)
+			if s.ID == id {
+				removed = true
+				continue
 			}
+			out = append(out, s)
+		}
+		if !removed {
+			return fmt.Errorf("sprint not found")
 		}
 		d.Sprints = out
+		// Detach tasks that referenced this sprint so they don't keep
+		// pointing at a dangling sprintId.
+		for i := range d.Tasks {
+			if d.Tasks[i].SprintID == id {
+				d.Tasks[i].SprintID = 0
+			}
+		}
 		return nil
 	})
 }

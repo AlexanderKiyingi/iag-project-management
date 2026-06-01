@@ -44,6 +44,14 @@ func NextSubtaskID(d *Document) int {
 	return NextIntID(len(d.Subtasks), func(i int) int { return d.Subtasks[i].ID })
 }
 
+func NextSectionID(d *Document) int {
+	return NextIntID(len(d.Sections), func(i int) int { return d.Sections[i].ID })
+}
+
+func NextEntityCommentID(d *Document) int {
+	return NextIntID(len(d.EntityComments), func(i int) int { return d.EntityComments[i].ID })
+}
+
 func NextRequisitionID(d *Document) int {
 	return NextIntID(len(d.Requisitions), func(i int) int { return d.Requisitions[i].ID })
 }
