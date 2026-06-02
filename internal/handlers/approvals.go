@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // approveTask records the actor's approval on an approval-type task.
@@ -18,12 +19,12 @@ import (
 func (h *Entities) approveTask(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	actor := strings.TrimSpace(c.GetHeader("X-Workspace-User"))
 	if actor == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "missing actor")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -63,12 +64,12 @@ func (h *Entities) approveTask(c *gin.Context) {
 func (h *Entities) rejectTask(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	actor := strings.TrimSpace(c.GetHeader("X-Workspace-User"))
 	if actor == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "missing actor")
 		return
 	}
 	var body struct {
@@ -108,14 +109,14 @@ func (h *Entities) rejectTask(c *gin.Context) {
 func (h *Entities) setApprovers(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var body struct {
 		Approvers []string `json:"approvers"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	approvers := dedupeNonEmpty(body.Approvers)

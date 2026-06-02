@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/alvor-technologies/iag-platform-go/corsenv"
 )
 
 type Config struct {
@@ -50,7 +52,7 @@ func Load() (Config, error) {
 		ServiceClientSecret: strings.TrimSpace(os.Getenv("SERVICE_CLIENT_SECRET")),
 		AuthTokenURL:        envOr("AUTH_TOKEN_URL", strings.TrimRight(issuer, "/")+"/oauth/token"),
 		GatewayAPIPrefix:    strings.TrimSpace(envOr("GATEWAY_API_PREFIX", "/api/v1/project-management")),
-		CORSOrigin:          envOr("CORS_ORIGIN", "http://localhost:3000"),
+		CORSOrigin:          corsenv.Allowlist(corsenv.DefaultDevOrigins),
 		PublicAPIURL:        strings.TrimRight(strings.TrimSpace(envOr("PUBLIC_API_URL", "")), "/"),
 		UsersAPIURL:         usersAPIURL(envOr("PUBLIC_API_URL", ""), envOr("USERS_API_URL", "")),
 		AutoMigrate:         envOr("AUTO_MIGRATE", "true") != "false",

@@ -22,6 +22,7 @@ import (
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/usersclient"
 	"github.com/iag/project-management/backend/internal/workspace"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type Entities struct {
@@ -156,7 +157,7 @@ func (h *Entities) deleteAudit(c *gin.Context) {
 func (h *Entities) patchSettings(c *gin.Context) {
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -203,14 +204,14 @@ func (h *Entities) createTask(c *gin.Context) {
 		SprintID  *int   `json:"sprintId"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
 	var created models.Task
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
@@ -263,12 +264,12 @@ func (h *Entities) createTask(c *gin.Context) {
 func (h *Entities) patchTask(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
@@ -276,7 +277,7 @@ func (h *Entities) patchTask(c *gin.Context) {
 	var updated models.Task
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
@@ -452,12 +453,12 @@ func (h *Entities) createTasksBulk(c *gin.Context) {
 		Tasks []bulkTaskInput `json:"tasks"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || len(body.Tasks) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	for _, in := range body.Tasks {
 		if strings.TrimSpace(in.Name) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "every task requires a name"})
+			apierr.JSONStatus(c, http.StatusBadRequest, "every task requires a name")
 			return
 		}
 	}
@@ -529,7 +530,7 @@ func (h *Entities) patchTasksBulk(c *gin.Context) {
 		} `json:"patches"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || len(body.Patches) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	patchByID := make(map[int]map[string]any, len(body.Patches))
@@ -540,7 +541,7 @@ func (h *Entities) patchTasksBulk(c *gin.Context) {
 		patchByID[p.ID] = p.Patch
 	}
 	if len(patchByID) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no valid patches"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "no valid patches")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
@@ -593,7 +594,7 @@ func (h *Entities) deleteTasksBatch(c *gin.Context) {
 		IDs []int `json:"ids"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || len(body.IDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	// Default is hard-delete to preserve the prior contract; soft-delete is
@@ -687,7 +688,7 @@ func (h *Entities) patchTaskCustom(c *gin.Context) {
 	// to avoid version-bumping for invalid input.
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	for _, def := range doc.TaskCustomFieldDefs {
@@ -695,7 +696,7 @@ func (h *Entities) patchTaskCustom(c *gin.Context) {
 			continue
 		}
 		if msg := validateCustomFieldValue(def, body.Value); msg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+			apierr.JSONStatus(c, http.StatusBadRequest, msg)
 			return
 		}
 		break
@@ -765,14 +766,14 @@ func (h *Entities) addTaskComment(c *gin.Context) {
 		Text string `json:"text"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.Text == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
 	parsedMentions := mentions.Parse(body.Text)
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	var membersSnapshot []models.Member
@@ -813,7 +814,7 @@ func (h *Entities) deleteTaskComment(c *gin.Context) {
 func (h *Entities) createGoal(c *gin.Context) {
 	var g models.Goal
 	if err := c.ShouldBindJSON(&g); err != nil || g.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	var created models.Goal
@@ -844,7 +845,7 @@ func (h *Entities) patchGoal(c *gin.Context) {
 		Progress *int   `json:"progress"`
 	}
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -914,7 +915,7 @@ func (h *Entities) goalProgress(c *gin.Context) {
 func (h *Entities) createSprint(c *gin.Context) {
 	var sp models.Sprint
 	if err := c.ShouldBindJSON(&sp); err != nil || sp.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	var created models.Sprint
@@ -998,7 +999,7 @@ func (h *Entities) deleteSprint(c *gin.Context) {
 func (h *Entities) createChat(c *gin.Context) {
 	var ch models.Chat
 	if err := c.ShouldBindJSON(&ch); err != nil || ch.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	var created models.Chat
@@ -1066,14 +1067,14 @@ func (h *Entities) postMessage(c *gin.Context) {
 		ReminderAt  *string                       `json:"reminderAt"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
 	parsedMentions := mentions.Parse(body.Text)
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	var messageID int
@@ -1104,19 +1105,19 @@ func (h *Entities) postMessage(c *gin.Context) {
 func (h *Entities) addMessageReaction(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var body struct {
 		Emoji string `json:"emoji"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Emoji) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
 	if actor == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "missing actor")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -1143,17 +1144,17 @@ func (h *Entities) addMessageReaction(c *gin.Context) {
 func (h *Entities) removeMessageReaction(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	emoji := c.Param("emoji")
 	if emoji == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid emoji"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid emoji")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
 	if actor == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "missing actor")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -1185,7 +1186,7 @@ func (h *Entities) removeMessageReaction(c *gin.Context) {
 func (h *Entities) createFile(c *gin.Context) {
 	var f models.WorkspaceFile
 	if err := c.ShouldBindJSON(&f); err != nil || f.N == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -1194,7 +1195,7 @@ func (h *Entities) createFile(c *gin.Context) {
 	}
 	_, wsMeta, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	if h.Files != nil && f.Data != "" && len(f.Data) > 256 {
@@ -1217,13 +1218,13 @@ func (h *Entities) createFile(c *gin.Context) {
 
 func (h *Entities) getFile(c *gin.Context) {
 	if h.Files == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file storage disabled"})
+		apierr.JSONStatus(c, http.StatusNotFound, "file storage disabled")
 		return
 	}
 	rawID := c.Param("id")
 	blobID, err := uuid.Parse(strings.TrimPrefix(rawID, "blob:"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid file id")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -1232,21 +1233,21 @@ func (h *Entities) getFile(c *gin.Context) {
 	}
 	ws, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	rec, err := h.Files.GetBlob(c.Request.Context(), blobID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "file not found")
 		return
 	}
 	if rec.WorkspaceID != ws.ID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "file not in workspace"})
+		apierr.JSONStatus(c, http.StatusForbidden, "file not in workspace")
 		return
 	}
 	payload, err := h.Files.ReadBlob(rec)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "read file failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "read file failed")
 		return
 	}
 	ct := rec.ContentType
@@ -1261,7 +1262,7 @@ func (h *Entities) putProject(c *gin.Context) {
 	id := c.Param("id")
 	var p models.Project
 	if err := c.ShouldBindJSON(&p); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	p.ID = id
@@ -1277,7 +1278,7 @@ func (h *Entities) putProject(c *gin.Context) {
 func (h *Entities) createRequisition(c *gin.Context) {
 	var req models.Requisition
 	if err := c.ShouldBindJSON(&req); err != nil || req.Title == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	var created models.Requisition
@@ -1326,7 +1327,7 @@ func (h *Entities) addMember(c *gin.Context) {
 		Member *models.Member `json:"member"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -1335,7 +1336,7 @@ func (h *Entities) addMember(c *gin.Context) {
 	}
 	wsMeta, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	role := body.Role
@@ -1343,7 +1344,7 @@ func (h *Entities) addMember(c *gin.Context) {
 		role = "member"
 	}
 	if err := h.Svc.Repo.AddMember(c.Request.Context(), wsMeta.ID, body.UserID, role); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "add member failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "add member failed")
 		return
 	}
 	if body.Member != nil && body.Member.Initials != "" {
@@ -1376,7 +1377,7 @@ func (h *Entities) setOrg(c *gin.Context) {
 		OrgID string `json:"orgId"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -1388,20 +1389,20 @@ func (h *Entities) setOrg(c *gin.Context) {
 		bearer := bearerFromRequest(c)
 		if _, err := h.Users.GetOrg(c.Request.Context(), bearer, orgID); err != nil {
 			if errors.Is(err, usersclient.ErrForbidden) || errors.Is(err, usersclient.ErrNotFound) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "org_not_accessible"})
+				apierr.JSONStatus(c, http.StatusForbidden, "org_not_accessible")
 				return
 			}
-			c.JSON(http.StatusBadGateway, gin.H{"error": "users_service_unavailable"})
+			apierr.JSONStatus(c, http.StatusBadGateway, "users_service_unavailable")
 			return
 		}
 	}
 	ws, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	if err := h.Svc.Repo.SetOrgID(c.Request.Context(), ws.OwnerUserID, orgID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "set org failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "set org failed")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -1444,12 +1445,12 @@ func (h *Entities) getWorkspaceOrg(c *gin.Context) {
 	}
 	ws, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	var doc models.Document
 	if err := json.Unmarshal(ws.Document, &doc); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "decode workspace")
 		return
 	}
 	out := gin.H{"orgId": doc.OrgID}
@@ -1463,12 +1464,12 @@ func (h *Entities) getWorkspaceOrg(c *gin.Context) {
 
 func (h *Entities) listOrgs(c *gin.Context) {
 	if h.Users == nil || !h.Users.Enabled() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "users_service_not_configured"})
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "users_service_not_configured")
 		return
 	}
 	items, err := h.Users.ListOrgs(c.Request.Context(), bearerFromRequest(c))
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "users_service_unavailable"})
+		apierr.JSONStatus(c, http.StatusBadGateway, "users_service_unavailable")
 		return
 	}
 	if items == nil {
@@ -1479,21 +1480,21 @@ func (h *Entities) listOrgs(c *gin.Context) {
 
 func (h *Entities) listOrgMembers(c *gin.Context) {
 	if h.Users == nil || !h.Users.Enabled() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "users_service_not_configured"})
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "users_service_not_configured")
 		return
 	}
 	orgID := strings.TrimSpace(c.Param("orgId"))
 	if orgID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid orgId"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid orgId")
 		return
 	}
 	items, err := h.Users.ListOrgMembers(c.Request.Context(), bearerFromRequest(c), orgID)
 	if err != nil {
 		if errors.Is(err, usersclient.ErrForbidden) || errors.Is(err, usersclient.ErrNotFound) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "org_not_accessible"})
+			apierr.JSONStatus(c, http.StatusForbidden, "org_not_accessible")
 			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "users_service_unavailable"})
+		apierr.JSONStatus(c, http.StatusBadGateway, "users_service_unavailable")
 		return
 	}
 	if items == nil {

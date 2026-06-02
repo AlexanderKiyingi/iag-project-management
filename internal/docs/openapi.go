@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 //go:embed openapi.yaml
@@ -27,7 +28,7 @@ func Register(r *gin.Engine) {
 	r.GET("/openapi.json", func(c *gin.Context) {
 		var doc any
 		if err := yaml.Unmarshal(openAPIYAML, &doc); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "spec parse failed"})
+			apierr.JSONStatus(c, http.StatusInternalServerError, "spec parse failed")
 			return
 		}
 		// yaml.v3 decodes maps as map[string]any when the keys are strings,

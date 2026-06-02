@@ -10,6 +10,7 @@ import (
 
 	"github.com/iag/project-management/backend/internal/audit"
 	"github.com/iag/project-management/backend/internal/auth"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type Audit struct {
@@ -25,7 +26,7 @@ func (h *Audit) Register(rg *gin.RouterGroup) {
 // should see.
 func (h *Audit) listRequests(c *gin.Context) {
 	if h.Pool == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "audit disabled"})
+		apierr.JSONStatus(c, http.StatusNotImplemented, "audit disabled")
 		return
 	}
 	f := audit.ListFilter{
@@ -47,7 +48,7 @@ func (h *Audit) listRequests(c *gin.Context) {
 	}
 	rows, err := audit.List(c.Request.Context(), h.Pool, f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "audit query failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "audit query failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": rows, "limit": f.Limit, "offset": f.Offset})

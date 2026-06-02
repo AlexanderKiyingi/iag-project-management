@@ -14,6 +14,7 @@ import (
 
 	"github.com/alvor-technologies/iag-authclient"
 	"github.com/iag/project-management/backend/internal/ctxkeys"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type PlatformAuth struct {
@@ -47,7 +48,7 @@ func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 			return
 		}
 		if m.verifier == nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "jwt verifier not configured"})
+			apierr.Write(c, http.StatusServiceUnavailable, apierr.CodeServiceUnavailable, "JWT verifier not configured")
 			return
 		}
 		tokenStr := bearerToken(c)
@@ -57,7 +58,7 @@ func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 		}
 		claims, userID, err := m.verifier.Verify(tokenStr)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			apierr.Unauthorized(c, "invalid or expired token")
 			return
 		}
 		setPrincipal(c, userID, claims, claims.Permissions)
@@ -68,7 +69,7 @@ func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 func (m *PlatformAuth) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := UserID(c); !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		c.Next()

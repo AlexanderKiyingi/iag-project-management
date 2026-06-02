@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) listTemplates(c *gin.Context) {
@@ -19,7 +20,7 @@ func (h *Entities) listTemplates(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": doc.Templates})
@@ -28,7 +29,7 @@ func (h *Entities) listTemplates(c *gin.Context) {
 func (h *Entities) getTemplate(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -37,7 +38,7 @@ func (h *Entities) getTemplate(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	for _, t := range doc.Templates {
@@ -46,7 +47,7 @@ func (h *Entities) getTemplate(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
+	apierr.JSONStatus(c, http.StatusNotFound, "template not found")
 }
 
 func (h *Entities) createTemplate(c *gin.Context) {
@@ -57,12 +58,12 @@ func (h *Entities) createTemplate(c *gin.Context) {
 		Body      map[string]any `json:"body"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Name) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	tType := strings.ToLower(strings.TrimSpace(body.Type))
 	if tType != models.TemplateTypeProject && tType != models.TemplateTypeTask {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be project or task"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "type must be project or task")
 		return
 	}
 	if body.Body == nil {
@@ -97,7 +98,7 @@ func (h *Entities) createTemplate(c *gin.Context) {
 func (h *Entities) deleteTemplate(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -124,7 +125,7 @@ func (h *Entities) deleteTemplate(c *gin.Context) {
 func (h *Entities) applyTemplate(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var body struct {

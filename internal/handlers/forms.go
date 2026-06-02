@@ -14,6 +14,7 @@ import (
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) listForms(c *gin.Context) {
@@ -23,7 +24,7 @@ func (h *Entities) listForms(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": doc.Forms})
@@ -39,7 +40,7 @@ func (h *Entities) createForm(c *gin.Context) {
 		Public      bool               `json:"public"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Name) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	slug := strings.TrimSpace(body.Slug)
@@ -84,12 +85,12 @@ func (h *Entities) createForm(c *gin.Context) {
 func (h *Entities) patchForm(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -128,7 +129,7 @@ func (h *Entities) patchForm(c *gin.Context) {
 func (h *Entities) deleteForm(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -169,16 +170,16 @@ func (h *PublicForms) Register(r *gin.Engine) {
 func (h *PublicForms) describe(c *gin.Context) {
 	slug := strings.TrimSpace(c.Param("slug"))
 	if slug == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid slug"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid slug")
 		return
 	}
 	_, form, err := findFormBySlug(c.Request.Context(), h.Repo, slug)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "form not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "form not found")
 		return
 	}
 	if !form.Public {
-		c.JSON(http.StatusForbidden, gin.H{"error": "form is not public"})
+		apierr.JSONStatus(c, http.StatusForbidden, "form is not public")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -194,29 +195,29 @@ func (h *PublicForms) describe(c *gin.Context) {
 func (h *PublicForms) submit(c *gin.Context) {
 	slug := strings.TrimSpace(c.Param("slug"))
 	if slug == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid slug"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid slug")
 		return
 	}
 	owner, form, err := findFormBySlug(c.Request.Context(), h.Repo, slug)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "form not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "form not found")
 		return
 	}
 	if !form.Public {
-		c.JSON(http.StatusForbidden, gin.H{"error": "form is not public"})
+		apierr.JSONStatus(c, http.StatusForbidden, "form is not public")
 		return
 	}
 	var body struct {
 		Values map[string]string `json:"values"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	// Enforce required fields.
 	for _, f := range form.Fields {
 		if f.Required && strings.TrimSpace(body.Values[f.ID]) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing required field: " + f.ID})
+			apierr.JSONStatus(c, http.StatusBadRequest, "missing required field: "+f.ID)
 			return
 		}
 	}
@@ -253,7 +254,7 @@ func (h *PublicForms) submit(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "submission failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "submission failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

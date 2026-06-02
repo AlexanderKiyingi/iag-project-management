@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // taskHomedIn reports whether a task is anchored to the given project,
@@ -68,14 +69,14 @@ func normalizeTaskProjects(t *models.Task) {
 func (h *Entities) addTaskProject(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid task id")
 		return
 	}
 	var body struct {
 		ProjectID string `json:"projectId"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.ProjectID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -98,12 +99,12 @@ func (h *Entities) addTaskProject(c *gin.Context) {
 func (h *Entities) removeTaskProject(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid task id")
 		return
 	}
 	projectID := strings.TrimSpace(c.Param("projectId"))
 	if projectID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {

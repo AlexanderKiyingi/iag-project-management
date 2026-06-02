@@ -19,6 +19,7 @@ import (
 
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // PublicShare serves read-only views protected by a public share
@@ -50,23 +51,23 @@ func (h *PublicShare) getTask(c *gin.Context) {
 	tokenStr := c.Param("token")
 	claims, err := h.verifyToken(c.Request.Context(), tokenStr)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusUnauthorized, err.Error())
 		return
 	}
 	idStr := c.Param("id")
 	resource := "task:" + idStr
 	if !shareTokenAllows(claims, resource) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "token does not grant access to this resource"})
+		apierr.JSONStatus(c, http.StatusForbidden, "token does not grant access to this resource")
 		return
 	}
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	doc, ws, err := h.findDocumentByResource(c.Request.Context(), "task", idStr)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "task not found")
 		return
 	}
 	for _, t := range doc.Tasks {
@@ -78,30 +79,30 @@ func (h *PublicShare) getTask(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+	apierr.JSONStatus(c, http.StatusNotFound, "task not found")
 }
 
 func (h *PublicShare) getProject(c *gin.Context) {
 	tokenStr := c.Param("token")
 	claims, err := h.verifyToken(c.Request.Context(), tokenStr)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusUnauthorized, err.Error())
 		return
 	}
 	idStr := c.Param("id")
 	resource := "project:" + idStr
 	if !shareTokenAllows(claims, resource) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "token does not grant access to this resource"})
+		apierr.JSONStatus(c, http.StatusForbidden, "token does not grant access to this resource")
 		return
 	}
 	doc, ws, err := h.findDocumentByResource(c.Request.Context(), "project", idStr)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "project not found")
 		return
 	}
 	project, ok := doc.Projects[idStr]
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "project not found")
 		return
 	}
 	tasks := []models.Task{}

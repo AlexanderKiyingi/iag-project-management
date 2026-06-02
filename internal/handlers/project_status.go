@@ -9,12 +9,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) postProjectStatus(c *gin.Context) {
 	projectID := c.Param("id")
 	if strings.TrimSpace(projectID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
 	var body struct {
@@ -22,12 +23,12 @@ func (h *Entities) postProjectStatus(c *gin.Context) {
 		Summary string `json:"summary"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	normalized := normalizeProjectStatus(body.Status)
 	if normalized == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be on_track | at_risk | off_track"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "status must be on_track | at_risk | off_track")
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
@@ -67,7 +68,7 @@ func (h *Entities) postProjectStatus(c *gin.Context) {
 func (h *Entities) listProjectStatus(c *gin.Context) {
 	projectID := c.Param("id")
 	if strings.TrimSpace(projectID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
 	limit := 50
@@ -82,12 +83,12 @@ func (h *Entities) listProjectStatus(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	project, ok := doc.Projects[projectID]
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		apierr.JSONStatus(c, http.StatusNotFound, "project not found")
 		return
 	}
 	history := project.StatusHistory

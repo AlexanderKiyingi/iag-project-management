@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // PortfolioRollup is the per-portfolio summary returned by GET
@@ -40,7 +41,7 @@ func (h *Entities) listPortfolios(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	out := make([]PortfolioRollup, 0, len(doc.Portfolios))
@@ -54,7 +55,7 @@ func (h *Entities) listPortfolios(c *gin.Context) {
 func (h *Entities) getPortfolio(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -63,7 +64,7 @@ func (h *Entities) getPortfolio(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	for _, p := range doc.Portfolios {
@@ -72,7 +73,7 @@ func (h *Entities) getPortfolio(c *gin.Context) {
 			return
 		}
 	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "portfolio not found"})
+	apierr.JSONStatus(c, http.StatusNotFound, "portfolio not found")
 }
 
 func (h *Entities) createPortfolio(c *gin.Context) {
@@ -81,7 +82,7 @@ func (h *Entities) createPortfolio(c *gin.Context) {
 		ProjectIDs []string `json:"projectIds"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Name) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -112,12 +113,12 @@ func (h *Entities) createPortfolio(c *gin.Context) {
 func (h *Entities) patchPortfolio(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -147,7 +148,7 @@ func (h *Entities) patchPortfolio(c *gin.Context) {
 func (h *Entities) deletePortfolio(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {

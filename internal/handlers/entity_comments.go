@@ -10,12 +10,13 @@ import (
 
 	"github.com/iag/project-management/backend/internal/mentions"
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) addEntityCommentProject(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid project id")
 		return
 	}
 	h.addEntityComment(c, models.EntityCommentProject, id, func(d *models.Document) bool {
@@ -27,7 +28,7 @@ func (h *Entities) addEntityCommentProject(c *gin.Context) {
 func (h *Entities) addEntityCommentGoal(c *gin.Context) {
 	idInt, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid goal id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid goal id")
 		return
 	}
 	id := strconv.Itoa(idInt)
@@ -39,7 +40,7 @@ func (h *Entities) addEntityCommentGoal(c *gin.Context) {
 func (h *Entities) addEntityCommentSprint(c *gin.Context) {
 	idInt, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sprint id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid sprint id")
 		return
 	}
 	id := strconv.Itoa(idInt)
@@ -58,7 +59,7 @@ func (h *Entities) addEntityComment(c *gin.Context, entityType, entityID string,
 		Text string `json:"text"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Text) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -100,7 +101,7 @@ func (h *Entities) addEntityComment(c *gin.Context, entityType, entityID string,
 func (h *Entities) deleteEntityComment(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {

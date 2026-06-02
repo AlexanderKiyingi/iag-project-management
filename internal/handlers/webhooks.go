@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) listWebhooks(c *gin.Context) {
@@ -20,7 +21,7 @@ func (h *Entities) listWebhooks(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	// Redact the secret on list so it isn't accidentally exposed.
@@ -39,11 +40,11 @@ func (h *Entities) createWebhook(c *gin.Context) {
 		Secret string   `json:"secret"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.URL) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	if !strings.HasPrefix(body.URL, "https://") && !strings.HasPrefix(body.URL, "http://") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "url must be http(s)"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "url must be http(s)")
 		return
 	}
 	secret := strings.TrimSpace(body.Secret)
@@ -81,12 +82,12 @@ func (h *Entities) createWebhook(c *gin.Context) {
 func (h *Entities) patchWebhook(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -122,7 +123,7 @@ func (h *Entities) patchWebhook(c *gin.Context) {
 func (h *Entities) deleteWebhook(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {

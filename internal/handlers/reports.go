@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // workloadReport returns task counts by assignee for the workspace.
@@ -21,7 +22,7 @@ func (h *Entities) reportWorkload(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	by := strings.ToLower(strings.TrimSpace(c.DefaultQuery("by", "assignee")))
@@ -53,7 +54,7 @@ func (h *Entities) reportThroughput(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	from, _ := parseQueryTime(c, "from")
@@ -92,7 +93,7 @@ func (h *Entities) reportStatusRollup(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	projectFilter := strings.TrimSpace(c.Query("projectId"))
@@ -123,12 +124,12 @@ func (h *Entities) reportBurndown(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	sprintID := strings.TrimSpace(c.Param("id"))
 	if sprintID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sprint id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid sprint id")
 		return
 	}
 	// Find sprint window.
@@ -147,7 +148,7 @@ func (h *Entities) reportBurndown(c *gin.Context) {
 		break
 	}
 	if !foundSprint || start.IsZero() || end.IsZero() {
-		c.JSON(http.StatusNotFound, gin.H{"error": "sprint not found or missing dates"})
+		apierr.JSONStatus(c, http.StatusNotFound, "sprint not found or missing dates")
 		return
 	}
 	// Tasks attached to this sprint.

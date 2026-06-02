@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // MemberWorkload reports the live workload of one workspace member
@@ -42,7 +43,7 @@ func (h *Entities) workspaceWorkload(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"workload": computeWorkload(doc, windowDays), "windowDays": windowDays})

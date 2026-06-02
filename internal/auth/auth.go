@@ -8,12 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/middleware"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func RequireUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := middleware.UserID(c); !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		c.Next()
@@ -24,11 +25,11 @@ func RequireStaff() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := middleware.PlatformClaims(c)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		if !claims.IsStaff && !isPlatformSuperuser(claims) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "staff access required"})
+			apierr.Forbidden(c, "staff access required")
 			return
 		}
 		c.Next()
@@ -38,11 +39,11 @@ func RequireStaff() gin.HandlerFunc {
 func RequirePerm(codename string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := middleware.UserID(c); !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		if !HasPerm(c, codename) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "permission denied", "permission": codename})
+			apierr.WriteWith(c, http.StatusForbidden, apierr.CodeForbidden, "permission denied: "+codename, gin.H{"required_permission": codename})
 			return
 		}
 		c.Next()
@@ -60,7 +61,7 @@ func RequireWorkspaceWrite() gin.HandlerFunc {
 func requireAnyPerm(codenames ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := middleware.UserID(c); !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		for _, codename := range codenames {
@@ -69,7 +70,7 @@ func requireAnyPerm(codenames ...string) gin.HandlerFunc {
 				return
 			}
 		}
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "permission denied"})
+		apierr.Forbidden(c, "permission denied")
 	}
 }
 

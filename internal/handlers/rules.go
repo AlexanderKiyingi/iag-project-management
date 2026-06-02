@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) listRules(c *gin.Context) {
@@ -18,7 +19,7 @@ func (h *Entities) listRules(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": doc.Rules})
@@ -35,11 +36,11 @@ type ruleInput struct {
 func (h *Entities) createRule(c *gin.Context) {
 	var in ruleInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	if msg := validateRuleInput(in); msg != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
+		apierr.JSONStatus(c, http.StatusBadRequest, msg)
 		return
 	}
 	enabled := true
@@ -69,12 +70,12 @@ func (h *Entities) createRule(c *gin.Context) {
 func (h *Entities) patchRule(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -101,7 +102,7 @@ func (h *Entities) patchRule(c *gin.Context) {
 func (h *Entities) deleteRule(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 const (
@@ -38,7 +39,7 @@ func (h *Entities) listTasksPaged(c *gin.Context) {
 	}
 	doc, ws, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	applyProjectVisibility(&doc, uid)
@@ -94,12 +95,12 @@ func (h *Entities) listTasksPaged(c *gin.Context) {
 func (h *Entities) listMessagesPaged(c *gin.Context) {
 	chatRaw := strings.TrimSpace(c.Query("chatId"))
 	if chatRaw == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "chatId is required"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "chatId is required")
 		return
 	}
 	chatID, err := strconv.Atoi(chatRaw)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chatId"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid chatId")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -108,7 +109,7 @@ func (h *Entities) listMessagesPaged(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 

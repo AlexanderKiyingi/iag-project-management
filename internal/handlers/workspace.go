@@ -14,6 +14,7 @@ import (
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -34,17 +35,17 @@ func (h *Workspace) Register(rg *gin.RouterGroup) {
 func (h *Workspace) get(c *gin.Context) {
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	ws, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	var doc models.Document
 	if err := json.Unmarshal(ws.Document, &doc); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "decode workspace")
 		return
 	}
 	applyProjectVisibility(&doc, uid)
@@ -124,12 +125,12 @@ type putBody struct {
 func (h *Workspace) put(c *gin.Context) {
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	var body putBody
 	if err := c.ShouldBindJSON(&body); err != nil || len(body.Data) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	expected := int64(0)
@@ -145,7 +146,7 @@ func (h *Workspace) put(c *gin.Context) {
 	if expected == 0 {
 		existing, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+			apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 			return
 		}
 		expected = existing.Version
@@ -153,16 +154,16 @@ func (h *Workspace) put(c *gin.Context) {
 
 	ws, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	updated, err := h.Svc.Repo.Update(c.Request.Context(), ws.OwnerUserID, body.Data, expected)
 	if errors.Is(err, store.ErrVersionConflict) {
-		c.JSON(http.StatusConflict, gin.H{"error": "version conflict"})
+		apierr.JSONStatus(c, http.StatusConflict, "version conflict")
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "save workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "save workspace")
 		return
 	}
 	h.Svc.BroadcastWorkspace(c.Request.Context(), updated)
@@ -172,16 +173,16 @@ func (h *Workspace) put(c *gin.Context) {
 func (h *Workspace) ws(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "token required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "token required")
 		return
 	}
 	if h.Platform == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "auth not configured"})
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "auth not configured")
 		return
 	}
 	userID, _, err := h.Platform.VerifyBearerToken(token)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "invalid token")
 		return
 	}
 

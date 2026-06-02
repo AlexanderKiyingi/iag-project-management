@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // startTimer opens a running TimeEntry for the actor against a task.
@@ -18,12 +19,12 @@ import (
 func (h *Entities) startTimer(c *gin.Context) {
 	taskID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid task id")
 		return
 	}
 	actor := strings.TrimSpace(c.GetHeader("X-Workspace-User"))
 	if actor == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "missing actor")
 		return
 	}
 	var body struct {
@@ -57,7 +58,7 @@ func (h *Entities) startTimer(c *gin.Context) {
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "timer already running") {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			apierr.JSONStatus(c, http.StatusConflict, err.Error())
 			return
 		}
 		writeMutationError(c, err)
@@ -72,12 +73,12 @@ func (h *Entities) startTimer(c *gin.Context) {
 func (h *Entities) stopTimer(c *gin.Context) {
 	taskID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid task id")
 		return
 	}
 	actor := strings.TrimSpace(c.GetHeader("X-Workspace-User"))
 	if actor == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing actor"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "missing actor")
 		return
 	}
 	var body struct {
@@ -111,7 +112,7 @@ func (h *Entities) stopTimer(c *gin.Context) {
 func (h *Entities) listTaskTime(c *gin.Context) {
 	taskID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid task id")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -120,7 +121,7 @@ func (h *Entities) listTaskTime(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	entries := make([]models.TimeEntry, 0)
@@ -138,7 +139,7 @@ func (h *Entities) listTaskTime(c *gin.Context) {
 func (h *Entities) listUserTime(c *gin.Context) {
 	userParam := strings.TrimSpace(c.Param("id"))
 	if userParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid user id")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -147,7 +148,7 @@ func (h *Entities) listUserTime(c *gin.Context) {
 	}
 	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
 	from, hasFrom := parseQueryTime(c, "from")

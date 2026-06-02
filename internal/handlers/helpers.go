@@ -11,6 +11,7 @@ import (
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func userID(c *gin.Context) (string, bool) {
@@ -21,7 +22,7 @@ func userID(c *gin.Context) (string, bool) {
 func requireUserID(c *gin.Context) (string, bool) {
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 	}
 	return uid, ok
 }
@@ -35,20 +36,20 @@ func respondWorkspace(c *gin.Context, ws store.Workspace) {
 func mutate(c *gin.Context, svc *workspace.Service, fn func(*models.Document) error) {
 	uid, ok := userID(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	ws, err := svc.Mutate(c.Request.Context(), uid, fn)
 	if err != nil {
 		if errors.Is(err, store.ErrVersionConflict) {
-			c.JSON(http.StatusConflict, gin.H{"error": "version conflict"})
+			apierr.JSONStatus(c, http.StatusConflict, "version conflict")
 			return
 		}
 		if strings.Contains(strings.ToLower(err.Error()), "not found") {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			apierr.JSONStatus(c, http.StatusNotFound, err.Error())
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "operation failed")
 		return
 	}
 	respondWorkspace(c, ws)
@@ -56,12 +57,12 @@ func mutate(c *gin.Context, svc *workspace.Service, fn func(*models.Document) er
 
 func writeMutationError(c *gin.Context, err error) {
 	if errors.Is(err, store.ErrVersionConflict) {
-		c.JSON(http.StatusConflict, gin.H{"error": "version conflict"})
+		apierr.JSONStatus(c, http.StatusConflict, "version conflict")
 		return
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "not found") {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		apierr.JSONStatus(c, http.StatusNotFound, err.Error())
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "operation failed"})
+	apierr.JSONStatus(c, http.StatusInternalServerError, "operation failed")
 }

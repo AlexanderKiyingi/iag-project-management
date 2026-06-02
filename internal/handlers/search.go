@@ -8,6 +8,7 @@ import (
 
 	"github.com/iag/project-management/backend/internal/auth"
 	"github.com/iag/project-management/backend/internal/search"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type Search struct {
@@ -20,7 +21,7 @@ func (h *Search) Register(rg *gin.RouterGroup) {
 
 func (h *Search) query(c *gin.Context) {
 	if h.Svc == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "search disabled"})
+		apierr.JSONStatus(c, http.StatusNotImplemented, "search disabled")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -29,14 +30,14 @@ func (h *Search) query(c *gin.Context) {
 	}
 	q := strings.TrimSpace(c.Query("q"))
 	if q == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "q is required"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "q is required")
 		return
 	}
 	entityType := strings.TrimSpace(c.Query("type"))
 	switch entityType {
 	case "", search.TypeTask, search.TypeProject, search.TypeGoal, search.TypeMessage:
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported type"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "unsupported type")
 		return
 	}
 	hits, total, err := h.Svc.Query(c.Request.Context(), search.QueryInput{
@@ -47,7 +48,7 @@ func (h *Search) query(c *gin.Context) {
 		Offset:      parseNonNegativeQuery(c, "offset", 0),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
+		apierr.JSONStatus(c, http.StatusInternalServerError, "search failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

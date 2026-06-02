@@ -10,12 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) putCustomField(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var body struct {
@@ -24,16 +25,16 @@ func (h *Entities) putCustomField(c *gin.Context) {
 		Options []string `json:"options"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Name) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	ftype := strings.ToLower(strings.TrimSpace(body.Type))
 	if !models.ValidCustomFieldType(ftype) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported custom field type"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "unsupported custom field type")
 		return
 	}
 	if (ftype == models.CustomFieldTypeSelect || ftype == models.CustomFieldTypeMultiSelect) && len(body.Options) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "select fields require options"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "select fields require options")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -57,7 +58,7 @@ func (h *Entities) putCustomField(c *gin.Context) {
 func (h *Entities) deleteCustomField(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {

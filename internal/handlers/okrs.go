@@ -10,12 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 func (h *Entities) addKeyResult(c *gin.Context) {
 	goalID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var body struct {
@@ -26,7 +27,7 @@ func (h *Entities) addKeyResult(c *gin.Context) {
 		Unit    string  `json:"unit"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Name) == "" || body.Target <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body (need name and positive target)"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body (need name and positive target)")
 		return
 	}
 	uid, ok := requireUserID(c)
@@ -61,17 +62,17 @@ func (h *Entities) addKeyResult(c *gin.Context) {
 func (h *Entities) patchKeyResult(c *gin.Context) {
 	goalID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid goal id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid goal id")
 		return
 	}
 	krID, err := strconv.Atoi(c.Param("krId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid key result id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid key result id")
 		return
 	}
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -94,12 +95,12 @@ func (h *Entities) patchKeyResult(c *gin.Context) {
 func (h *Entities) deleteKeyResult(c *gin.Context) {
 	goalID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid goal id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid goal id")
 		return
 	}
 	krID, err := strconv.Atoi(c.Param("krId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid key result id"})
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid key result id")
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
