@@ -503,6 +503,7 @@ type Member struct {
 	Email      string  `json:"email,omitempty"`
 	UserID     string  `json:"userId,omitempty"` // canonical auth identifier; preferred match key for upstream events
 	Role       string  `json:"role"`
+	// AccessRole (owner|editor|viewer) is UI/sync metadata; API auth uses JWT pm.* permissions.
 	AccessRole string  `json:"accessRole"`
 	Color      string  `json:"color"`
 	Tasks      int     `json:"tasks"`

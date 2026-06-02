@@ -6,7 +6,7 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 
 | Service | Integration |
 |---------|-------------|
-| **iag-authentication** | Gateway JWT; registers `pm.*` permissions at startup |
+| **iag-authentication** | Gateway JWT; registers `pm.*` permissions at startup; default `user` group receives `pm.view_workspace` and `pm.mutate_workspace` |
 | **iag-users** | Org membership + billing identity; PM validates org links and proxies org APIs |
 | **iag-api-gateway** | Public ingress at `/api/v1/project-management/api/v1/...` |
 | **Redis** | WebSocket fan-out across replicas (`REDIS_URL`) |
@@ -44,6 +44,20 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 | GET | `/api/v1/orgs/:orgId/members` | Org members (iag-users proxy) |
 
 Send `X-Workspace-User` (initials) on mutating requests for audit attribution.
+
+## Permissions
+
+| Codename | Purpose |
+|----------|---------|
+| `pm.view_workspace` | Read workspace and entity APIs |
+| `pm.mutate_workspace` | Create/update/delete workspace content |
+| `pm.admin` | Manage workspace members and org metadata |
+
+Gateway policies require `pm.view_workspace` or `pm.mutate_workspace` on `/api/v1/project-management/api/v1/*`. Service middleware uses the same codenames (no fail-open when the JWT permission list is empty).
+
+## Workspace member `AccessRole`
+
+Each member in the workspace document may include `accessRole`: `owner`, `editor`, or `viewer`. This field is set when sharing a workspace or when org membership events sync members. It is **not** used for request authorization today — access is governed by JWT `pm.*` permissions and document ownership. Clients may use `accessRole` for UI labels and future fine-grained sharing.
 
 ## Events (Kafka)
 

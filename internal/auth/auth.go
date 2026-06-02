@@ -63,11 +63,6 @@ func requireAnyPerm(codenames ...string) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		perms := middleware.Permissions(c)
-		if len(perms) == 0 {
-			c.Next()
-			return
-		}
 		for _, codename := range codenames {
 			if HasPerm(c, codename) {
 				c.Next()
