@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/alvor-technologies/iag-authclient"
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/middleware"
@@ -26,7 +27,7 @@ func RequireStaff() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
 		}
-		if !claims.IsStaff && !claims.IsSuperuser {
+		if !claims.IsStaff && !isPlatformSuperuser(claims) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "staff access required"})
 			return
 		}
@@ -79,7 +80,7 @@ func requireAnyPerm(codenames ...string) gin.HandlerFunc {
 
 func HasPerm(c *gin.Context, codename string) bool {
 	claims, ok := middleware.PlatformClaims(c)
-	if ok && claims.IsSuperuser {
+	if ok && isPlatformSuperuser(claims) {
 		return true
 	}
 	for _, p := range middleware.Permissions(c) {
@@ -87,6 +88,21 @@ func HasPerm(c *gin.Context, codename string) bool {
 			return true
 		}
 		if strings.HasPrefix(codename, "pm.") && p == strings.TrimPrefix(codename, "pm.") {
+			return true
+		}
+	}
+	return false
+}
+
+func isPlatformSuperuser(claims *authclient.Claims) bool {
+	if claims == nil {
+		return false
+	}
+	if claims.IsSuperuser {
+		return true
+	}
+	for _, g := range claims.Groups {
+		if g == "superadmin" {
 			return true
 		}
 	}

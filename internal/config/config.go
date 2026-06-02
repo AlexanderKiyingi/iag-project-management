@@ -39,6 +39,7 @@ type Config struct {
 // GATEWAY_INTERNAL_SECRET — every inbound request must carry a verifiable
 // Bearer token with aud=iag.project-management.
 func Load() (Config, error) {
+	loadDotEnv()
 	issuer := envOr("JWT_ISSUER", "http://localhost:3001")
 	cfg := Config{
 		Addr:                ListenAddr(),
