@@ -31,6 +31,10 @@ const (
 	TypeMilestoneDueSoon      = "contracts.milestone.due_soon"
 	TypeUserDeactivated       = "auth.user.deactivated"
 	TypeUserReactivated       = "auth.user.reactivated"
+	TypeUserUpdated           = "auth.user.updated"
+	TypeUserDeleted           = "auth.user.deleted"
+	TypeOrgMemberAdded        = "users.org.member_added"
+	TypeOrgMemberRemoved      = "users.org.member_removed"
 )
 
 // Handler routes envelopes to the right per-type handler. Unknown types are
@@ -63,10 +67,16 @@ func (h *Handler) Handle(ctx context.Context, env platformevents.Envelope) error
 		return h.handleAssistanceRequested(ctx, env)
 	case TypeMilestoneDueSoon:
 		return h.handleMilestoneDueSoon(ctx, env)
-	case TypeUserDeactivated:
+	case TypeUserDeactivated, TypeUserDeleted:
 		return h.handleUserDeactivated(ctx, env)
 	case TypeUserReactivated:
 		return h.handleUserReactivated(ctx, env)
+	case TypeUserUpdated:
+		return h.handleUserUpdated(ctx, env)
+	case TypeOrgMemberAdded:
+		return h.handleOrgMemberAdded(ctx, env)
+	case TypeOrgMemberRemoved:
+		return h.handleOrgMemberRemoved(ctx, env)
 	default:
 		return nil
 	}
@@ -500,6 +510,194 @@ func workspaceHasMember(d *models.Document, ownerLower string) bool {
 		}
 	}
 	return false
+}
+
+func (h *Handler) handleUserUpdated(ctx context.Context, env platformevents.Envelope) error {
+	userID := stringField(env.Data, "userId")
+	email := stringField(env.Data, "email")
+	fullName := stringField(env.Data, "fullName")
+	if userID == "" {
+		return platformevents.Permanent(fmt.Errorf("user.updated event missing userId"))
+	}
+	actor := stringField(env.Data, "actor")
+	if actor == "" {
+		actor = "auth"
+	}
+	list, err := h.Repo.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ws := range list {
+		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			if applyUserIdentityUpdate(d, userID, email, fullName, actor) {
+				return nil
+			}
+			return nil
+		}); err != nil {
+			slog.Warn("user-updated consumer: mutate failed", "owner", ws.OwnerUserID, "err", err)
+		}
+	}
+	return nil
+}
+
+func (h *Handler) handleOrgMemberAdded(ctx context.Context, env platformevents.Envelope) error {
+	orgID := stringField(env.Data, "orgId")
+	userID := stringField(env.Data, "userId")
+	if orgID == "" || userID == "" {
+		return platformevents.Permanent(fmt.Errorf("org.member_added missing orgId or userId"))
+	}
+	email := stringField(env.Data, "email")
+	fullName := stringField(env.Data, "fullName")
+	role := stringField(env.Data, "role")
+	if role == "" {
+		role = "member"
+	}
+	actor := stringField(env.Data, "actor")
+	if actor == "" {
+		actor = "iag-users"
+	}
+
+	workspaces, err := h.Repo.ListWorkspacesByOrgID(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	for _, ws := range workspaces {
+		if err := h.Repo.AddMember(ctx, ws.ID, userID, role); err != nil {
+			slog.Warn("org member added: sql member failed", "workspace", ws.ID, "err", err)
+		}
+		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			if applyOrgMemberAdded(d, userID, email, fullName, role, actor) {
+				models.AppendAudit(d, actor, "users.org.member_added",
+					fmt.Sprintf("Org member %s added to workspace team", displayName(email, fullName, userID)), nil)
+			}
+			return nil
+		}); err != nil {
+			slog.Warn("org member added: mutate failed", "owner", ws.OwnerUserID, "err", err)
+		}
+	}
+	return nil
+}
+
+func (h *Handler) handleOrgMemberRemoved(ctx context.Context, env platformevents.Envelope) error {
+	orgID := stringField(env.Data, "orgId")
+	userID := stringField(env.Data, "userId")
+	if orgID == "" || userID == "" {
+		return platformevents.Permanent(fmt.Errorf("org.member_removed missing orgId or userId"))
+	}
+	email := stringField(env.Data, "email")
+	fullName := stringField(env.Data, "fullName")
+	actor := stringField(env.Data, "actor")
+	if actor == "" {
+		actor = "iag-users"
+	}
+
+	workspaces, err := h.Repo.ListWorkspacesByOrgID(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	for _, ws := range workspaces {
+		if err := h.Repo.RemoveMember(ctx, ws.ID, userID); err != nil {
+			slog.Warn("org member removed: sql delete failed", "workspace", ws.ID, "err", err)
+		}
+		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			applyUserDeactivation(d, userID, email, fullName, actor)
+			models.AppendAudit(d, actor, "users.org.member_removed",
+				fmt.Sprintf("Org member %s removed from workspace team", displayName(email, fullName, userID)), nil)
+			return nil
+		}); err != nil {
+			slog.Warn("org member removed: mutate failed", "owner", ws.OwnerUserID, "err", err)
+		}
+	}
+	return nil
+}
+
+func applyUserIdentityUpdate(d *models.Document, userID, email, fullName, actor string) bool {
+	userIDLower := strings.ToLower(strings.TrimSpace(userID))
+	emailLower := strings.ToLower(strings.TrimSpace(email))
+	nameLower := strings.ToLower(strings.TrimSpace(fullName))
+	changed := false
+	for i := range d.Members {
+		m := &d.Members[i]
+		if !memberMatches(m, userIDLower, emailLower, nameLower) {
+			continue
+		}
+		if email != "" && m.Email != email {
+			m.Email = email
+			changed = true
+		}
+		if fullName != "" && m.Name != fullName {
+			m.Name = fullName
+			changed = true
+		}
+		if userID != "" && m.UserID == "" {
+			m.UserID = userID
+			changed = true
+		}
+	}
+	if changed {
+		subject := displayName(email, fullName, userID)
+		models.AppendAudit(d, actor, "auth.user.updated",
+			fmt.Sprintf("Updated profile for %s", subject), nil)
+	}
+	return changed
+}
+
+func applyOrgMemberAdded(d *models.Document, userID, email, fullName, role, actor string) bool {
+	userIDLower := strings.ToLower(strings.TrimSpace(userID))
+	for _, m := range d.Members {
+		if m.UserID != "" && strings.EqualFold(m.UserID, userIDLower) {
+			return false
+		}
+		if email != "" && m.Email != "" && strings.EqualFold(m.Email, email) {
+			return false
+		}
+	}
+	name := fullName
+	if name == "" {
+		name = email
+	}
+	active := true
+	member := models.Member{
+		UserID:     userID,
+		Email:      email,
+		Name:       name,
+		Initials:   initialsFromName(name),
+		Role:       role,
+		AccessRole: role,
+		Active:     &active,
+	}
+	d.Members = append(d.Members, member)
+	return true
+}
+
+func initialsFromName(name string) string {
+	parts := strings.Fields(strings.TrimSpace(name))
+	if len(parts) == 0 {
+		return "??"
+	}
+	if len(parts) == 1 {
+		r := []rune(parts[0])
+		if len(r) >= 2 {
+			return strings.ToUpper(string(r[0:2]))
+		}
+		return strings.ToUpper(string(r))
+	}
+	return strings.ToUpper(string([]rune(parts[0])[0]) + string([]rune(parts[len(parts)-1])[0]))
+}
+
+func displayName(email, fullName, userID string) string {
+	if fullName != "" {
+		return fullName
+	}
+	if email != "" {
+		return email
+	}
+	return userID
+}
+
+// ApplyOrgMemberAdded adds a platform org member to a workspace document when absent.
+func ApplyOrgMemberAdded(d *models.Document, userID, email, fullName, role string) bool {
+	return applyOrgMemberAdded(d, userID, email, fullName, role, "iag-users")
 }
 
 func nextNotificationID(d *models.Document) int {

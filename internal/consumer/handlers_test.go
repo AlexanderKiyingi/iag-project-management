@@ -107,6 +107,31 @@ func TestWorkspaceHasMember(t *testing.T) {
 	}
 }
 
+func TestApplyUserIdentityUpdate(t *testing.T) {
+	d := &models.Document{Members: []models.Member{
+		{UserID: "uid-1", Email: "old@example.com", Name: "Old Name"},
+	}}
+	if !applyUserIdentityUpdate(d, "uid-1", "new@example.com", "New Name", "admin") {
+		t.Fatal("expected change")
+	}
+	if d.Members[0].Email != "new@example.com" || d.Members[0].Name != "New Name" {
+		t.Fatalf("unexpected member: %+v", d.Members[0])
+	}
+}
+
+func TestApplyOrgMemberAdded(t *testing.T) {
+	d := &models.Document{}
+	if !applyOrgMemberAdded(d, "uid-2", "jane@example.com", "Jane Doe", "member", "org") {
+		t.Fatal("expected member added")
+	}
+	if len(d.Members) != 1 || d.Members[0].UserID != "uid-2" {
+		t.Fatalf("unexpected members: %+v", d.Members)
+	}
+	if applyOrgMemberAdded(d, "uid-2", "jane@example.com", "Jane Doe", "member", "org") {
+		t.Fatal("duplicate should not add")
+	}
+}
+
 func TestApplyUserDeactivationClearsAssignmentsAndMarksMember(t *testing.T) {
 	t.Parallel()
 	d := &models.Document{

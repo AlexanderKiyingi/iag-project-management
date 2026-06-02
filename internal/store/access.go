@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -42,6 +43,40 @@ func (r *Repository) SetOrgID(ctx context.Context, ownerUserID, orgID string) er
 		UPDATE pm_workspaces SET org_id = NULLIF($2, ''), updated_at = NOW()
 		WHERE owner_user_id = $1`,
 		ownerUserID, orgID,
+	)
+	return err
+}
+
+// ListWorkspacesByOrgID returns workspaces linked to a platform org (iag-users).
+func (r *Repository) ListWorkspacesByOrgID(ctx context.Context, orgID string) ([]Workspace, error) {
+	if strings.TrimSpace(orgID) == "" {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, owner_user_id, document, version
+		FROM pm_workspaces
+		WHERE org_id = $1`,
+		orgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Workspace
+	for rows.Next() {
+		var ws Workspace
+		if err := rows.Scan(&ws.ID, &ws.OwnerUserID, &ws.Document, &ws.Version); err != nil {
+			return nil, err
+		}
+		out = append(out, ws)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) RemoveMember(ctx context.Context, workspaceID uuid.UUID, userID string) error {
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM pm_workspace_members WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, userID,
 	)
 	return err
 }

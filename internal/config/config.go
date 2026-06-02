@@ -19,6 +19,7 @@ type Config struct {
 	GatewayAPIPrefix    string
 	CORSOrigin          string
 	PublicAPIURL        string
+	UsersAPIURL         string // iag-users base (gateway: .../api/v1/users/v1)
 	AutoMigrate         bool
 	KafkaBrokers        []string
 	EventBusEnabled     bool
@@ -50,6 +51,7 @@ func Load() (Config, error) {
 		GatewayAPIPrefix:    strings.TrimSpace(envOr("GATEWAY_API_PREFIX", "/api/v1/project-management")),
 		CORSOrigin:          envOr("CORS_ORIGIN", "http://localhost:3000"),
 		PublicAPIURL:        strings.TrimRight(strings.TrimSpace(envOr("PUBLIC_API_URL", "")), "/"),
+		UsersAPIURL:         usersAPIURL(envOr("PUBLIC_API_URL", ""), envOr("USERS_API_URL", "")),
 		AutoMigrate:         envOr("AUTO_MIGRATE", "true") != "false",
 		EventBusEnabled:     strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
 		UploadDir:           envOr("PM_UPLOAD_DIR", "./data/pm-uploads"),
@@ -84,6 +86,17 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func usersAPIURL(publicAPI, explicit string) string {
+	if u := strings.TrimRight(strings.TrimSpace(explicit), "/"); u != "" {
+		return u
+	}
+	publicAPI = strings.TrimRight(strings.TrimSpace(publicAPI), "/")
+	if publicAPI == "" {
+		return "http://localhost:8080/api/v1/users"
+	}
+	return publicAPI + "/api/v1/users"
 }
 
 // parseDuration reads a duration env var (e.g. "15m", "24h"). Non-positive or

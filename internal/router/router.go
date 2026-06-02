@@ -21,6 +21,7 @@ import (
 	"github.com/iag/project-management/backend/internal/realtime"
 	"github.com/iag/project-management/backend/internal/search"
 	"github.com/iag/project-management/backend/internal/store"
+	"github.com/iag/project-management/backend/internal/usersclient"
 	"github.com/iag/project-management/backend/internal/webhooks"
 	"github.com/iag/project-management/backend/internal/workspace"
 )
@@ -101,7 +102,7 @@ func New(opts Options) *gin.Engine {
 		WebhookEnqueuer: webhookAdapter{store: opts.Webhooks},
 	}
 	(&handlers.Workspace{Svc: svc, Platform: opts.PlatformAuth}).Register(api)
-	(&handlers.Entities{Svc: svc, Files: opts.FileStore}).Register(api)
+	(&handlers.Entities{Svc: svc, Files: opts.FileStore, Users: usersclient.New(opts.Cfg.UsersAPIURL)}).Register(api)
 	(&handlers.PlatformStatus{Cfg: opts.Cfg, Repo: opts.Repo}).Register(api)
 	(&handlers.Audit{Pool: opts.Repo.Pool()}).Register(api)
 	(&handlers.Search{Svc: opts.Search}).Register(api)

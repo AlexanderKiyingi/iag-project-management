@@ -185,10 +185,26 @@ the Members and Org Settings panels.
 
 ---
 
-## 4. Complete Endpoint Catalog
+## 4. Endpoint Catalog (core surface)
 
 All routes prefixed with the base URL (§7). Routes are gated by the
 permission listed in the third column.
+
+> **Scope note:** this catalog covers the core workspace surface. The
+> Phase 4–6 feature routes are **not** all listed here — they exist in
+> [`internal/handlers/entities.go`](../internal/handlers/entities.go)
+> `Register()` and follow the same `pm.view_workspace` /
+> `pm.mutate_workspace` gating: templates (`/templates`), automation
+> rules (`/rules`), time tracking (`/tasks/:id/time/*`, `/users/:id/time`),
+> portfolios (`/portfolios`), intake forms (`/forms`), reports
+> (`/reports/{workload,throughput,status-rollup,burndown/:id}`), webhooks
+> (`/webhooks`), subtasks (`/tasks/:id/subtasks`), task approvals
+> (`/tasks/:id/{approve,reject,approvers}`), message reactions
+> (`/messages/:id/reactions`), project sections (`/projects/:id/sections`),
+> project status (`/projects/:id/status`), custom-field defs
+> (`/custom-fields/:id`), and entity comments
+> (`/{projects,goals,sprints}/:id/comments`). Treat the router source as
+> the authoritative list until an OpenAPI spec ships (§10).
 
 ### 4.1 Public probes (no auth)
 
@@ -220,6 +236,8 @@ permission listed in the third column.
 |---|---|---|---|
 | POST | `/api/v1/tasks` | `pm.mutate_workspace` | Create task — body is a Task |
 | PATCH | `/api/v1/tasks/:id` | `pm.mutate_workspace` | Partial-update — JSON-merge |
+| POST | `/api/v1/tasks/bulk` | `pm.mutate_workspace` | Body `{tasks: [...]}` — create many |
+| POST | `/api/v1/tasks/bulk-patch` | `pm.mutate_workspace` | Bulk partial-update many |
 | POST | `/api/v1/tasks/delete-batch` | `pm.mutate_workspace` | Body `{ids: [...]}` — delete many |
 | POST | `/api/v1/tasks/:id/tags` | `pm.mutate_workspace` | Body `{tag}` — add tag |
 | DELETE | `/api/v1/tasks/:id/tags/:tag` | `pm.mutate_workspace` | Remove tag |
@@ -241,6 +259,9 @@ permission listed in the third column.
 | PATCH | `/api/v1/goals/:id` | `pm.mutate_workspace` |
 | DELETE | `/api/v1/goals/:id` | `pm.mutate_workspace` |
 | POST | `/api/v1/goals/:id/progress` | `pm.mutate_workspace` |
+| POST | `/api/v1/goals/:id/key-results` | `pm.mutate_workspace` |
+| PATCH | `/api/v1/goals/:id/key-results/:krId` | `pm.mutate_workspace` |
+| DELETE | `/api/v1/goals/:id/key-results/:krId` | `pm.mutate_workspace` |
 
 ### 4.6 Sprints
 
@@ -365,9 +386,12 @@ The `:id` path param accepts either the bare UUID or the `blob:<uuid>`
 form. Anyone with `pm.view_workspace` for the workspace can fetch the
 file; the handler verifies blob → workspace ownership.
 
-**Practical sizing:** the request body cap is 8 MB; for larger files,
-upload to your own storage and store the URL as a string in `data`
-(skip blob persistence by keeping `data` under 256 bytes).
+**Practical sizing:** PM itself enforces **no** request-body limit — the
+effective cap is whatever the API gateway imposes. The bundled gateway
+nginx config sets `client_max_body_size 20m`, so plan for ~20 MB and keep
+uploads comfortably under it (confirm against your own gateway deploy).
+For larger files, upload to your own storage and store the URL as a string
+in `data` (skip blob persistence by keeping `data` under 256 bytes).
 
 ---
 
@@ -375,9 +399,16 @@ upload to your own storage and store the URL as a string in `data`
 
 | Environment | REST base | WebSocket base |
 |---|---|---|
-| Local direct | `http://localhost:8083/api/v1` | `ws://localhost:8083/api/v1` |
+| Local direct | `http://localhost:4102/api/v1` | `ws://localhost:4102/api/v1` |
 | Local via gateway | `http://localhost:8080/api/v1/project-management/api/v1` | `ws://localhost:8080/api/v1/project-management/api/v1` |
-| Production | `https://<gateway>/api/v1/project-management/api/v1` | `wss://<gateway>/api/v1/project-management/api/v1` |
+| Production | `https://iag-api-gateway-production.up.railway.app/api/v1/project-management/api/v1` | `wss://iag-api-gateway-production.up.railway.app/api/v1/project-management/api/v1` |
+
+> **Public entry point is the gateway only.** In production the frontend
+> talks exclusively to `https://iag-api-gateway-production.up.railway.app`.
+> Individual services run on Railway's private network
+> (`iag-project-management.railway.internal`) and are **not** meant to be
+> called via their own `*.up.railway.app` host — that bypasses the gateway's
+> rate limiting, CORS, and request-ID handling.
 
 > The `/api/v1` repeats because the gateway prefix is
 > `/api/v1/project-management` and the service itself mounts everything
@@ -387,9 +418,17 @@ upload to your own storage and store the URL as a string in `data`
 ### Required frontend env vars
 
 ```env
+# Local (via gateway)
 NEXT_PUBLIC_PM_API_URL=http://localhost:8080/api/v1/project-management/api/v1
 NEXT_PUBLIC_PM_WS_URL=ws://localhost:8080/api/v1/project-management/api/v1
 NEXT_PUBLIC_AUTH_API_URL=http://localhost:8080/api/v1/authentication
+```
+
+```env
+# Production (Railway, via gateway)
+NEXT_PUBLIC_PM_API_URL=https://iag-api-gateway-production.up.railway.app/api/v1/project-management/api/v1
+NEXT_PUBLIC_PM_WS_URL=wss://iag-api-gateway-production.up.railway.app/api/v1/project-management/api/v1
+NEXT_PUBLIC_AUTH_API_URL=https://iag-api-gateway-production.up.railway.app/api/v1/authentication
 ```
 
 ### CORS
@@ -400,7 +439,8 @@ Allowed headers: `Content-Type, Authorization, If-Match, X-Workspace-User`.
 Exposed: `ETag`. Credentials flag is on (legacy), but PM uses the
 Authorization header — no cookies.
 
-Request bodies above **8 MB** are rejected (file uploads use this).
+Request bodies are capped at the **gateway** (the bundled nginx config
+uses `client_max_body_size 20m`); PM imposes no body limit of its own.
 
 ---
 
@@ -416,7 +456,7 @@ branching:
 | 403 | Permission denied | Hide the UI control |
 | 404 | Resource not found | Soft state — re-fetch document |
 | 409 | Version conflict (workspace PUT or entity mutation) | Re-fetch `/workspace`, merge, retry |
-| 413 | Request body > 8 MB | Trim or upload to external storage |
+| 413 | Request body over the gateway cap (~20 MB nginx default) | Trim or upload to external storage |
 | 500 | Server error | Generic toast + retry |
 | 503 | DB / Redis unavailable | Show maintenance banner |
 
@@ -483,8 +523,9 @@ repo:
   resync.
 - **No declarative entity queries** — the GET is the full document.
   Filter and paginate client-side. Document size is typically < 500 KB.
-- **No batch entity create.** Each POST is one entity. (There is
-  `POST /tasks/delete-batch` for deletes.)
+- **Limited batch endpoints.** Tasks support `POST /tasks/bulk` (create),
+  `POST /tasks/bulk-patch` (update), and `POST /tasks/delete-batch`
+  (delete). Other entities are one-per-request.
 - **No shared TS client package** (unlike `@iag/fleet-client`). Use
   `fetch` + the route table here.
 

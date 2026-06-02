@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,17 +13,21 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/iag/project-management/backend/internal/auth"
+	"github.com/iag/project-management/backend/internal/consumer"
 	"github.com/iag/project-management/backend/internal/events"
 	"github.com/iag/project-management/backend/internal/files"
 	"github.com/iag/project-management/backend/internal/mentions"
 	"github.com/iag/project-management/backend/internal/middleware"
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/iag/project-management/backend/internal/store"
+	"github.com/iag/project-management/backend/internal/usersclient"
 	"github.com/iag/project-management/backend/internal/workspace"
 )
 
 type Entities struct {
 	Svc   *workspace.Service
 	Files *files.Store
+	Users *usersclient.Client
 }
 
 func (h *Entities) Register(rg *gin.RouterGroup) {
@@ -131,6 +136,9 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 
 	rg.POST("/workspace/members", authz, auth.RequirePerm("pm.admin"), h.addMember)
 	rg.PATCH("/workspace/org", authz, auth.RequirePerm("pm.admin"), h.setOrg)
+	rg.GET("/workspace/org", auth.RequireWorkspaceRead(), h.getWorkspaceOrg)
+	rg.GET("/orgs", auth.RequireWorkspaceRead(), h.listOrgs)
+	rg.GET("/orgs/:orgId/members", auth.RequireWorkspaceRead(), h.listOrgMembers)
 	rg.GET("/workspace/workload", auth.RequireWorkspaceRead(), h.workspaceWorkload)
 }
 
@@ -1375,17 +1383,129 @@ func (h *Entities) setOrg(c *gin.Context) {
 	if !ok {
 		return
 	}
+	orgID := strings.TrimSpace(body.OrgID)
+	if orgID != "" && h.Users != nil && h.Users.Enabled() {
+		bearer := bearerFromRequest(c)
+		if _, err := h.Users.GetOrg(c.Request.Context(), bearer, orgID); err != nil {
+			if errors.Is(err, usersclient.ErrForbidden) || errors.Is(err, usersclient.ErrNotFound) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "org_not_accessible"})
+				return
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": "users_service_unavailable"})
+			return
+		}
+	}
 	ws, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
 		return
 	}
-	if err := h.Svc.Repo.SetOrgID(c.Request.Context(), ws.OwnerUserID, body.OrgID); err != nil {
+	if err := h.Svc.Repo.SetOrgID(c.Request.Context(), ws.OwnerUserID, orgID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "set org failed"})
 		return
 	}
 	mutate(c, h.Svc, func(d *models.Document) error {
-		d.OrgID = body.OrgID
+		d.OrgID = orgID
 		return nil
 	})
+	if orgID != "" {
+		h.syncOrgMembersToWorkspace(c, ws, orgID, bearerFromRequest(c))
+	}
+}
+
+func (h *Entities) syncOrgMembersToWorkspace(c *gin.Context, ws store.Workspace, orgID, bearer string) {
+	if h.Users == nil || !h.Users.Enabled() || bearer == "" {
+		return
+	}
+	members, err := h.Users.ListOrgMembers(c.Request.Context(), bearer, orgID)
+	if err != nil {
+		return
+	}
+	for _, m := range members {
+		if strings.EqualFold(m.UserID, ws.OwnerUserID) {
+			continue
+		}
+		role := m.Role
+		if role == "" {
+			role = "member"
+		}
+		_ = h.Svc.Repo.AddMember(c.Request.Context(), ws.ID, m.UserID, role)
+		_, _ = h.Svc.Mutate(c.Request.Context(), ws.OwnerUserID, func(d *models.Document) error {
+			consumer.ApplyOrgMemberAdded(d, m.UserID, m.Email, m.FullName, role)
+			return nil
+		})
+	}
+}
+
+func (h *Entities) getWorkspaceOrg(c *gin.Context) {
+	uid, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	ws, err := h.Svc.Repo.ResolveForUser(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load workspace"})
+		return
+	}
+	var doc models.Document
+	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode workspace"})
+		return
+	}
+	out := gin.H{"orgId": doc.OrgID}
+	if doc.OrgID != "" && h.Users != nil && h.Users.Enabled() {
+		if org, err := h.Users.GetOrg(c.Request.Context(), bearerFromRequest(c), doc.OrgID); err == nil {
+			out["org"] = org
+		}
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Entities) listOrgs(c *gin.Context) {
+	if h.Users == nil || !h.Users.Enabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "users_service_not_configured"})
+		return
+	}
+	items, err := h.Users.ListOrgs(c.Request.Context(), bearerFromRequest(c))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "users_service_unavailable"})
+		return
+	}
+	if items == nil {
+		items = []usersclient.Organization{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h *Entities) listOrgMembers(c *gin.Context) {
+	if h.Users == nil || !h.Users.Enabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "users_service_not_configured"})
+		return
+	}
+	orgID := strings.TrimSpace(c.Param("orgId"))
+	if orgID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid orgId"})
+		return
+	}
+	items, err := h.Users.ListOrgMembers(c.Request.Context(), bearerFromRequest(c), orgID)
+	if err != nil {
+		if errors.Is(err, usersclient.ErrForbidden) || errors.Is(err, usersclient.ErrNotFound) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "org_not_accessible"})
+			return
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": "users_service_unavailable"})
+		return
+	}
+	if items == nil {
+		items = []usersclient.OrgMember{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func bearerFromRequest(c *gin.Context) string {
+	h := c.GetHeader("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	return ""
 }

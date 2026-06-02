@@ -6,7 +6,8 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 
 | Service | Integration |
 |---------|-------------|
-| **iag-authentication** | Gateway JWT → `X-IAG-*` headers; optional `AUTH_MODE=jwt` for local dev; registers `pm.*` permissions at startup |
+| **iag-authentication** | Gateway JWT; registers `pm.*` permissions at startup |
+| **iag-users** | Org membership + billing identity; PM validates org links and proxies org APIs |
 | **iag-api-gateway** | Public ingress at `/api/v1/project-management/api/v1/...` |
 | **Redis** | WebSocket fan-out across replicas (`REDIS_URL`) |
 | **iag-notifications** | Subscribes to `iag.commercial` for `pm.alert.raised`, `pm.task.assigned`, and `pm.mention.created` |
@@ -22,6 +23,7 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 | `AUDIENCE` | Required aud claim on inbound tokens (default `iag.project-management`) |
 | `SERVICE_CLIENT_ID` / `SERVICE_CLIENT_SECRET` / `AUTH_TOKEN_URL` | Service-account credentials for outbound calls + permission registration |
 | `PUBLIC_API_URL` | Gateway origin for status |
+| `USERS_API_URL` | iag-users gateway base (default `{PUBLIC_API_URL}/api/v1/users`; client calls `/v1/...` → `/api/v1/users/v1/...`) |
 | `GATEWAY_API_PREFIX` | `/api/v1/project-management` |
 | `NOTIFY_DEFAULT_RECIPIENT` | Optional inbox for task/mention/reminder emails via notifications |
 | `TASK_DUE_REMINDER_DAYS` | Jobs: tasks due within N days (default `7`) |
@@ -36,7 +38,10 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 | * | `/api/v1/tasks`, `/goals`, `/sprints`, `/chats`, … | Per-entity REST (see `internal/handlers/entities.go`) |
 | POST | `/api/v1/requisitions` | Creates requisition + publishes `pm.requisition.submitted` (consumed by **iag-procurement**) |
 | POST | `/api/v1/workspace/members` | Share workspace (`pm.admin`) |
-| PATCH | `/api/v1/workspace/org` | Set `org_id` for tenancy metadata |
+| PATCH | `/api/v1/workspace/org` | Set `org_id` (validated against iag-users) |
+| GET | `/api/v1/workspace/org` | Linked org id + metadata |
+| GET | `/api/v1/orgs` | List caller's platform orgs (iag-users proxy) |
+| GET | `/api/v1/orgs/:orgId/members` | Org members (iag-users proxy) |
 
 Send `X-Workspace-User` (initials) on mutating requests for audit attribution.
 
@@ -48,6 +53,8 @@ Send `X-Workspace-User` (initials) on mutating requests for audit attribution.
 | `iag.commercial` | `pm.task.assigned` | Emitted on create and assignee patch; notifications when `NOTIFY_DEFAULT_RECIPIENT` set |
 | `iag.commercial` | `pm.mention.created` | Emitted from task comments and chat messages with `@mentions` |
 | `iag.commercial` | `pm.alert.raised` | Requisition submit + scheduled reminder jobs (`pm.requisition.submitted`, `pm.message.reminder`, `pm.task.due_soon`) |
+| `iag.commercial` | `auth.user.deactivated` / `auth.user.reactivated` / `auth.user.updated` | PM consumer syncs workspace members |
+| `iag.commercial` | `users.org.member_added` / `users.org.member_removed` | PM consumer syncs org-linked workspace teams |
 
 ## Scheduled jobs
 
