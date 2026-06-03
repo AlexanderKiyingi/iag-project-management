@@ -108,6 +108,15 @@ func taskVisibleAfterHiding(t models.Task, hidden map[string]struct{}) bool {
 	return false
 }
 
+func workspaceRolesChanged(before, after []models.WorkspaceRole) bool {
+	if len(before) != len(after) {
+		return true
+	}
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	return string(b) != string(a)
+}
+
 func memberIDsContain(ids []string, viewer string) bool {
 	for _, id := range ids {
 		if id == viewer {
@@ -157,6 +166,20 @@ func (h *Workspace) put(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
+	var incoming models.Document
+	if err := json.Unmarshal(body.Data, &incoming); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid workspace document")
+		return
+	}
+	var existingDoc models.Document
+	if err := json.Unmarshal(ws.Document, &existingDoc); err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "decode workspace")
+		return
+	}
+	if workspaceRolesChanged(existingDoc.Roles, incoming.Roles) && !auth.HasPerm(c, "pm.admin") {
+		apierr.JSONStatus(c, http.StatusForbidden, "pm.admin required to change workspace roles")
+		return
+	}
 	updated, err := h.Svc.Repo.Update(c.Request.Context(), ws.OwnerUserID, body.Data, expected)
 	if errors.Is(err, store.ErrVersionConflict) {
 		apierr.JSONStatus(c, http.StatusConflict, "version conflict")
@@ -180,9 +203,14 @@ func (h *Workspace) ws(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusServiceUnavailable, "auth not configured")
 		return
 	}
-	userID, _, err := h.Platform.VerifyBearerToken(token)
+	userID, claims, err := h.Platform.VerifyBearerToken(token)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusUnauthorized, "invalid token")
+		return
+	}
+	if !auth.HasPermClaims(claims, claims.Permissions, "pm.view_workspace") &&
+		!auth.HasPermClaims(claims, claims.Permissions, "pm.mutate_workspace") {
+		apierr.JSONStatus(c, http.StatusForbidden, "permission denied")
 		return
 	}
 

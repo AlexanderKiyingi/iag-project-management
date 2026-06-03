@@ -76,10 +76,18 @@ func requireAnyPerm(codenames ...string) gin.HandlerFunc {
 
 func HasPerm(c *gin.Context, codename string) bool {
 	claims, ok := middleware.PlatformClaims(c)
-	if ok && isPlatformSuperuser(claims) {
+	if !ok {
+		return false
+	}
+	return HasPermClaims(claims, middleware.Permissions(c), codename)
+}
+
+// HasPermClaims evaluates a codename against JWT claims (WebSocket upgrade, tests).
+func HasPermClaims(claims *authclient.Claims, granted []string, codename string) bool {
+	if claims != nil && isPlatformSuperuser(claims) {
 		return true
 	}
-	for _, p := range middleware.Permissions(c) {
+	for _, p := range granted {
 		if p == "*" || p == codename {
 			return true
 		}
