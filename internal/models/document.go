@@ -25,6 +25,7 @@ type Document struct {
 	Forms                []Form                 `json:"forms,omitempty"`
 	Webhooks             []WebhookSubscription  `json:"webhooks,omitempty"`
 	TaskCustomFieldDefs  []TaskCustomFieldDef   `json:"taskCustomFieldDefs"`
+	Roles                []WorkspaceRole        `json:"roles,omitempty"`
 	TaskListColumns      map[string]bool        `json:"taskListColumns"`
 	SidebarCollapsed     bool                   `json:"sidebarCollapsed"`
 	SidebarProjectsOpen  bool                   `json:"sidebarProjectsOpen"`
@@ -468,6 +469,15 @@ type TaskCustomFieldDef struct {
 	Name    string   `json:"name"`
 	Type    string   `json:"type"`
 	Options []string `json:"options"`
+}
+
+// WorkspaceRole is UI-defined RBAC metadata stored in the workspace document.
+type WorkspaceRole struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Permissions []string `json:"permissions"`
+	Color       string   `json:"color"`
 }
 
 const (
