@@ -306,6 +306,11 @@ permission listed in the third column.
    `procurement.requisition.approved` — pushes another full frame.
 4. The frame envelope is **always** `{type:"workspace", data, version}`.
 
+> **Future:** A lighter delta/event channel (`message.created`, etc.) is
+> documented but **not implemented** — see [REALTIME_FUTURE.md](./REALTIME_FUTURE.md).
+> v1 clients should merge chat/message slices from workspace pushes (see
+> iagprojects `pm` `lib/pm/workspace-merge.ts`).
+
 ```ts
 const ws = new WebSocket(
   `${WS_BASE}/api/v1/ws/workspace?token=${encodeURIComponent(accessToken)}`,
