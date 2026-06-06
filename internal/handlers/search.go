@@ -1,18 +1,23 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/iag/project-management/backend/internal/auth"
+	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/search"
+	"github.com/iag/project-management/backend/internal/visibility"
+	"github.com/iag/project-management/backend/internal/workspace"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 type Search struct {
-	Svc *search.Service
+	Svc   *search.Service
+	WsSvc *workspace.Service
 }
 
 func (h *Search) Register(rg *gin.RouterGroup) {
@@ -40,8 +45,21 @@ func (h *Search) query(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, "unsupported type")
 		return
 	}
+
+	ownerID := uid
+	var hidden map[string]struct{}
+	if h.WsSvc != nil && h.WsSvc.Repo != nil {
+		if ws, err := h.WsSvc.Repo.ResolveForUser(c.Request.Context(), uid); err == nil {
+			ownerID = ws.OwnerUserID
+			var doc models.Document
+			if json.Unmarshal(ws.Document, &doc) == nil {
+				hidden = visibility.HiddenProjectIDs(doc, ws.OwnerUserID, uid)
+			}
+		}
+	}
+
 	hits, total, err := h.Svc.Query(c.Request.Context(), search.QueryInput{
-		OwnerUserID: uid,
+		OwnerUserID: ownerID,
 		Q:           q,
 		EntityType:  entityType,
 		Limit:       parsePositiveQuery(c, "limit", 50, 200),
@@ -50,6 +68,10 @@ func (h *Search) query(c *gin.Context) {
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "search failed")
 		return
+	}
+	hits = visibility.FilterSearchHits(hits, hidden)
+	if len(hidden) > 0 {
+		total = len(hits)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"items":  hits,

@@ -42,7 +42,6 @@ func (h *Entities) listTasksPaged(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
 		return
 	}
-	applyProjectVisibility(&doc, uid)
 
 	limit := parsePositiveQuery(c, "limit", defaultPageLimit, maxPageLimit)
 	offset := parseNonNegativeQuery(c, "offset", 0)

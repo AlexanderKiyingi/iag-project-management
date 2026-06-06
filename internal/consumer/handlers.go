@@ -14,6 +14,7 @@ import (
 	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 
 	"github.com/iag/project-management/backend/internal/events"
+	"github.com/iag/project-management/backend/internal/financeclient"
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
@@ -40,8 +41,9 @@ const (
 // Handler routes envelopes to the right per-type handler. Unknown types are
 // silently ignored — PM is one consumer among many on iag.commercial.
 type Handler struct {
-	Svc  *workspace.Service
-	Repo *store.Repository
+	Svc     *workspace.Service
+	Repo    *store.Repository
+	Finance *financeclient.Client
 }
 
 // Handle implements platformevents.Handler. Events sourced from PM itself
@@ -105,11 +107,13 @@ func (h *Handler) handleRequisition(ctx context.Context, env platformevents.Enve
 		ts = env.Time
 	}
 
+	found := false
 	_, err := h.Svc.Mutate(ctx, owner, func(d *models.Document) error {
 		for i := range d.Requisitions {
 			if d.Requisitions[i].ID != reqID {
 				continue
 			}
+			found = true
 			d.Requisitions[i].Status = outcome
 			switch outcome {
 			case "approved":
@@ -122,19 +126,24 @@ func (h *Handler) handleRequisition(ctx context.Context, env platformevents.Enve
 				fmt.Sprintf("Requisition #%d %s by %s", reqID, outcome, actor), nil)
 			return nil
 		}
-		// Requisition not found in workspace — not an error (could have been
-		// deleted locally); audit it and move on.
 		slog.Info("requisition not found for upstream event", "owner", owner, "reqId", reqID, "outcome", outcome)
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if found && outcome == "approved" {
+		h.bookApprovedRequisitionAP(ctx, owner, reqID)
+	}
+	return nil
 }
 
 func (h *Handler) handleContractCreated(ctx context.Context, env platformevents.Envelope) error {
+	if _, _, ok := h.resolveContractProject(ctx, env.Data); ok {
+		return h.linkContractOnProject(ctx, env, "contracts.contract.created")
+	}
 	owner := stringField(env.Data, "workspaceOwnerUserId")
 	if owner == "" {
-		// Contract events aren't targeted at a specific workspace — skip.
-		// Future: link to a project if data.projectId resolves to a known project.
 		return nil
 	}
 	no := stringField(env.Data, "no")
@@ -170,6 +179,9 @@ func (h *Handler) handleContractLifecycle(ctx context.Context, env platformevent
 	}
 	for _, ws := range list {
 		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
+			if action == "deleted" {
+				removeLinkedContract(d, no)
+			}
 			models.AppendAudit(d, "contracts", "contracts.contract."+action,
 				fmt.Sprintf("Contract %s (%s) %s", no, name, action), nil)
 			return nil
@@ -202,7 +214,15 @@ func (h *Handler) handleContractStatusChanged(ctx context.Context, env platforme
 		}
 		matched := owner != "" && workspaceHasMember(&doc, owner)
 		if _, err := h.Svc.Mutate(ctx, ws.OwnerUserID, func(d *models.Document) error {
-			if matched {
+			if updateLinkedContractStatus(d, no, status) && matched {
+				d.Notifications = append(d.Notifications, models.WorkspaceNotification{
+					ID:    nextNotificationID(d),
+					Icon:  "contract",
+					Title: fmt.Sprintf("Contract %s status: %s", no, status),
+					Meta:  env.Time,
+					Body:  fmt.Sprintf("%s — %s → %s", name, previousStatus, status),
+				})
+			} else if matched {
 				d.Notifications = append(d.Notifications, models.WorkspaceNotification{
 					ID:    nextNotificationID(d),
 					Icon:  "contract",

@@ -27,6 +27,7 @@ import (
 	pgdb "github.com/iag/project-management/backend/internal/db"
 	pmconsumer "github.com/iag/project-management/backend/internal/consumer"
 	"github.com/iag/project-management/backend/internal/events"
+	"github.com/iag/project-management/backend/internal/financeclient"
 	"github.com/iag/project-management/backend/internal/files"
 	"github.com/iag/project-management/backend/internal/jobs"
 	"github.com/iag/project-management/backend/internal/migrate"
@@ -139,6 +140,13 @@ func main() {
 	go remindersLoop(ctx, repo, eventBus, cfg.RemindersInterval)
 	go archiveLoop(ctx, repo, cfg.ArchiveInterval)
 
+	financeClient := financeclient.New(financeclient.Config{
+		BaseURL:         cfg.FinanceAPIURL,
+		TokenURL:        cfg.AuthTokenURL,
+		ServiceClientID: cfg.ServiceClientID,
+		ServiceSecret:   cfg.ServiceClientSecret,
+	})
+
 	if cfg.ConsumerEnabled {
 		wsSvc := &workspace.Service{Repo: repo, Hub: hub, Redis: redisBridge, Events: eventBus}
 		consumer, closeDLQ, err := pmconsumer.New(pmconsumer.Options{
@@ -146,7 +154,7 @@ func main() {
 			GroupID:  cfg.ConsumerGroupID,
 			DLQTopic: cfg.ConsumerDLQTopic,
 			Pool:     pool,
-			Handler:  &pmconsumer.Handler{Svc: wsSvc, Repo: repo},
+			Handler:  &pmconsumer.Handler{Svc: wsSvc, Repo: repo, Finance: financeClient},
 		})
 		if err != nil {
 			slog.Error("consumer init", "err", err)

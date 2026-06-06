@@ -8,6 +8,7 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 |---------|-------------|
 | **iag-authentication** | Gateway JWT; registers `pm.*` permissions at startup; default `user` group receives `pm.view_workspace` and `pm.mutate_workspace` |
 | **iag-users** | Org membership + billing identity; PM validates org links and proxies org APIs |
+| **iag-finance** | Approved requisitions book AP (`PM-REQ-{id}`) via service account |
 | **iag-api-gateway** | Public ingress at `/api/v1/project-management/api/v1/...` |
 | **Redis** | WebSocket fan-out across replicas (`REDIS_URL`) |
 | **iag-notifications** | Subscribes to `iag.commercial` for `pm.alert.raised`, `pm.task.assigned`, and `pm.mention.created` |
@@ -23,7 +24,9 @@ Go/Gin service behind the **API gateway**, using **iag-authentication** for IAM 
 | `AUDIENCE` | Required aud claim on inbound tokens (default `iag.project-management`) |
 | `SERVICE_CLIENT_ID` / `SERVICE_CLIENT_SECRET` / `AUTH_TOKEN_URL` | Service-account credentials for outbound calls + permission registration |
 | `PUBLIC_API_URL` | Gateway origin for status |
-| `USERS_API_URL` | iag-users gateway base (default `{PUBLIC_API_URL}/api/v1/users`; client calls `/v1/...` → `/api/v1/users/v1/...`) |
+| `USERS_API_URL` | iag-users gateway base (default `{PUBLIC_API_URL}/api/v1/users`) |
+| `FINANCE_API_URL` | iag-finance gateway base (default `{PUBLIC_API_URL}/api/v1/finance`) |
+| `CONSUMER_ENABLED` | **Required in production** — sync procurement/contracts/auth/users events |
 | `GATEWAY_API_PREFIX` | `/api/v1/project-management` |
 | `NOTIFY_DEFAULT_RECIPIENT` | Optional inbox for task/mention/reminder emails via notifications |
 | `TASK_DUE_REMINDER_DAYS` | Jobs: tasks due within N days (default `7`) |

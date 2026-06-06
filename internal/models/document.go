@@ -49,8 +49,18 @@ type Project struct {
 	// ProjectVisibilityMembersOnly, only users whose userId appears in
 	// MemberIDs see the project; tasks anchored to a hidden project are
 	// filtered out of GET /workspace responses too.
-	Visibility    string                `json:"visibility,omitempty"`
-	MemberIDs     []string              `json:"memberIds,omitempty"`
+	Visibility        string                `json:"visibility,omitempty"`
+	MemberIDs         []string              `json:"memberIds,omitempty"`
+	LinkedContracts   []ProjectContractLink `json:"linkedContracts,omitempty"`
+}
+
+// ProjectContractLink records a contract-management contract tied to this project.
+type ProjectContractLink struct {
+	No       string `json:"no"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Zone     string `json:"zone,omitempty"`
+	LinkedAt string `json:"linkedAt"`
 }
 
 const (
@@ -189,6 +199,7 @@ type Requisition struct {
 	SubmittedAt   *string             `json:"submittedAt,omitempty"`
 	ApprovedAt    *string             `json:"approvedAt,omitempty"`
 	RejectedAt    *string             `json:"rejectedAt,omitempty"`
+	FinanceApRef  *string             `json:"financeApRef,omitempty"`
 }
 
 type RequisitionComment struct {

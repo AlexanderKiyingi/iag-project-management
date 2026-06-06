@@ -11,6 +11,7 @@ import (
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/realtime"
 	"github.com/iag/project-management/backend/internal/store"
+	"github.com/iag/project-management/backend/internal/visibility"
 )
 
 // Indexer is the search-index hook called after every successful
@@ -166,14 +167,18 @@ func cloneDocument(d models.Document) models.Document {
 	return out
 }
 
-// BroadcastWorkspace notifies the owner and all workspace members (shared tenancy).
+// BroadcastWorkspace notifies the owner and all workspace members with per-viewer filtering.
 func (s *Service) BroadcastWorkspace(ctx context.Context, ws store.Workspace) {
 	audience, err := s.Repo.WorkspaceAudience(ctx, ws.ID, ws.OwnerUserID)
 	if err != nil || len(audience) == 0 {
 		audience = []string{ws.OwnerUserID}
 	}
-	push := realtime.WorkspacePush{Type: "workspace", Data: ws.Document, Version: ws.Version}
 	for _, uid := range audience {
+		push, err := s.FilteredPush(ws, uid)
+		if err != nil {
+			slog.Warn("workspace broadcast filter failed", "viewer", uid, "err", err)
+			continue
+		}
 		if s.Redis != nil {
 			_ = s.Redis.Publish(ctx, uid, push)
 			continue
@@ -184,14 +189,42 @@ func (s *Service) BroadcastWorkspace(ctx context.Context, ws store.Workspace) {
 	}
 }
 
+// FilteredPush builds a per-viewer workspace websocket payload.
+func (s *Service) FilteredPush(ws store.Workspace, viewerUserID string) (realtime.WorkspacePush, error) {
+	var doc models.Document
+	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+		return realtime.WorkspacePush{}, err
+	}
+	visibility.Apply(&doc, ws.OwnerUserID, viewerUserID)
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return realtime.WorkspacePush{}, err
+	}
+	return realtime.WorkspacePush{Type: "workspace", Data: raw, Version: ws.Version}, nil
+}
+
 func (s *Service) LoadDocument(ctx context.Context, userID string) (models.Document, store.Workspace, error) {
 	ws, err := s.Repo.ResolveForUser(ctx, userID)
 	if err != nil {
 		return models.Document{}, store.Workspace{}, err
 	}
-	var doc models.Document
-	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+	doc, err := s.documentForViewer(ws, userID)
+	if err != nil {
 		return models.Document{}, store.Workspace{}, err
 	}
 	return doc, ws, nil
+}
+
+// DocumentForViewer returns a visibility-filtered document for HTTP/WS responses.
+func (s *Service) DocumentForViewer(ws store.Workspace, viewerUserID string) (models.Document, error) {
+	return s.documentForViewer(ws, viewerUserID)
+}
+
+func (s *Service) documentForViewer(ws store.Workspace, viewerUserID string) (models.Document, error) {
+	var doc models.Document
+	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+		return models.Document{}, err
+	}
+	visibility.Apply(&doc, ws.OwnerUserID, viewerUserID)
+	return doc, nil
 }

@@ -68,6 +68,11 @@ func (r *Repository) GetOrCreate(ctx context.Context, ownerUserID string) (Works
 	}, nil
 }
 
+// GetByOwner loads a workspace by owner user id.
+func (r *Repository) GetByOwner(ctx context.Context, ownerUserID string) (Workspace, error) {
+	return r.get(ctx, ownerUserID)
+}
+
 func (r *Repository) get(ctx context.Context, ownerUserID string) (Workspace, error) {
 	var ws Workspace
 	err := r.pool.QueryRow(ctx, `

@@ -71,13 +71,18 @@ func (h *PublicShare) getTask(c *gin.Context) {
 		return
 	}
 	for _, t := range doc.Tasks {
-		if t.ID == id && t.DeletedAt == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"task":    t,
-				"version": ws.Version,
-			})
+		if t.ID != id || t.DeletedAt != "" {
+			continue
+		}
+		if taskInMembersOnlyProject(doc, t) {
+			apierr.JSONStatus(c, http.StatusForbidden, "task is not publicly shareable")
 			return
 		}
+		c.JSON(http.StatusOK, gin.H{
+			"task":    t,
+			"version": ws.Version,
+		})
+		return
 	}
 	apierr.JSONStatus(c, http.StatusNotFound, "task not found")
 }
@@ -105,6 +110,10 @@ func (h *PublicShare) getProject(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusNotFound, "project not found")
 		return
 	}
+	if project.Visibility == models.ProjectVisibilityMembersOnly {
+		apierr.JSONStatus(c, http.StatusForbidden, "project is not publicly shareable")
+		return
+	}
 	tasks := []models.Task{}
 	for _, t := range doc.Tasks {
 		if t.DeletedAt != "" {
@@ -119,6 +128,19 @@ func (h *PublicShare) getProject(c *gin.Context) {
 		"tasks":   tasks,
 		"version": ws.Version,
 	})
+}
+
+func taskInMembersOnlyProject(doc models.Document, t models.Task) bool {
+	projects := t.Projects
+	if len(projects) == 0 && t.Project != "" {
+		projects = []string{t.Project}
+	}
+	for _, pid := range projects {
+		if p, ok := doc.Projects[pid]; ok && p.Visibility == models.ProjectVisibilityMembersOnly {
+			return true
+		}
+	}
+	return false
 }
 
 // findDocumentByResource locates the workspace that owns the named
@@ -145,11 +167,11 @@ func resourceLivesIn(doc models.Document, kind, id string) bool {
 	switch kind {
 	case "task":
 		if intID, err := strconv.Atoi(id); err == nil {
-			for _, t := range doc.Tasks {
-				if t.ID == intID {
-					return true
-				}
-			}
+	for _, t := range doc.Tasks {
+		if t.ID == intID && t.DeletedAt == "" {
+			return true
+		}
+	}
 		}
 	case "project":
 		_, ok := doc.Projects[id]

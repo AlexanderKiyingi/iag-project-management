@@ -11,6 +11,7 @@ import (
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
+	"github.com/iag/project-management/backend/internal/visibility"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
@@ -28,9 +29,18 @@ func requireUserID(c *gin.Context) (string, bool) {
 }
 
 func respondWorkspace(c *gin.Context, ws store.Workspace) {
-	var data any
-	_ = json.Unmarshal(ws.Document, &data)
-	c.JSON(http.StatusOK, gin.H{"data": data, "version": ws.Version})
+	uid, ok := userID(c)
+	if !ok {
+		apierr.JSONStatus(c, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	var doc models.Document
+	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "decode workspace")
+		return
+	}
+	visibility.Apply(&doc, ws.OwnerUserID, uid)
+	c.JSON(http.StatusOK, gin.H{"data": doc, "version": ws.Version})
 }
 
 func mutate(c *gin.Context, svc *workspace.Service, fn func(*models.Document) error) {

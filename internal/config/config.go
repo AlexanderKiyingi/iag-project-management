@@ -21,7 +21,8 @@ type Config struct {
 	GatewayAPIPrefix    string
 	CORSOrigin          string
 	PublicAPIURL        string
-	UsersAPIURL         string // iag-users base (gateway: .../api/v1/users/v1)
+	UsersAPIURL         string // iag-users base (gateway: .../api/v1/users)
+	FinanceAPIURL       string // iag-finance base (gateway: .../api/v1/finance)
 	AutoMigrate         bool
 	KafkaBrokers        []string
 	EventBusEnabled     bool
@@ -55,6 +56,7 @@ func Load() (Config, error) {
 		CORSOrigin:          corsenv.Allowlist(corsenv.DefaultDevOrigins),
 		PublicAPIURL:        strings.TrimRight(strings.TrimSpace(envOr("PUBLIC_API_URL", "")), "/"),
 		UsersAPIURL:         usersAPIURL(envOr("PUBLIC_API_URL", ""), envOr("USERS_API_URL", "")),
+		FinanceAPIURL:       financeAPIURL(envOr("PUBLIC_API_URL", ""), envOr("FINANCE_API_URL", "")),
 		AutoMigrate:         envOr("AUTO_MIGRATE", "true") != "false",
 		EventBusEnabled:     strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
 		UploadDir:           envOr("PM_UPLOAD_DIR", "./data/pm-uploads"),
@@ -92,14 +94,22 @@ func envOr(key, fallback string) string {
 }
 
 func usersAPIURL(publicAPI, explicit string) string {
+	return serviceAPIURL(publicAPI, explicit, "http://localhost:8080/api/v1/users", "/api/v1/users")
+}
+
+func financeAPIURL(publicAPI, explicit string) string {
+	return serviceAPIURL(publicAPI, explicit, "http://localhost:8080/api/v1/finance", "/api/v1/finance")
+}
+
+func serviceAPIURL(publicAPI, explicit, localDefault, suffix string) string {
 	if u := strings.TrimRight(strings.TrimSpace(explicit), "/"); u != "" {
 		return u
 	}
 	publicAPI = strings.TrimRight(strings.TrimSpace(publicAPI), "/")
 	if publicAPI == "" {
-		return "http://localhost:8080/api/v1/users"
+		return localDefault
 	}
-	return publicAPI + "/api/v1/users"
+	return publicAPI + suffix
 }
 
 // parseDuration reads a duration env var (e.g. "15m", "24h"). Non-positive or

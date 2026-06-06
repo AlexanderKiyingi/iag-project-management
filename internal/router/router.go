@@ -105,7 +105,7 @@ func New(opts Options) *gin.Engine {
 	(&handlers.Entities{Svc: svc, Files: opts.FileStore, Users: usersclient.New(opts.Cfg.UsersAPIURL)}).Register(api)
 	(&handlers.PlatformStatus{Cfg: opts.Cfg, Repo: opts.Repo}).Register(api)
 	(&handlers.Audit{Pool: opts.Repo.Pool()}).Register(api)
-	(&handlers.Search{Svc: opts.Search}).Register(api)
+	(&handlers.Search{Svc: opts.Search, WsSvc: svc}).Register(api)
 
 	return r
 }
