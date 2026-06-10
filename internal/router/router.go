@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/iag/project-management/backend/internal/audit"
 	"github.com/iag/project-management/backend/internal/automation"
@@ -43,6 +44,7 @@ type Options struct {
 func New(opts Options) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	r.Use(otelgin.Middleware(opts.Cfg.ServiceName))
 	r.Use(gin.Recovery())
 	r.Use(requestTimeout(getRequestTimeout()))
 	r.Use(corsMiddleware(opts.Cfg.CORSOrigin))

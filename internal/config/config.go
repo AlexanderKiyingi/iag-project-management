@@ -12,6 +12,8 @@ import (
 
 type Config struct {
 	Addr                string
+	ServiceName         string // OTel service.name / span tag
+	Environment         string // OTel deployment.environment.name
 	JWTIssuer           string
 	JWKSURL             string
 	Audience            string // aud claim the service requires on inbound tokens
@@ -46,6 +48,8 @@ func Load() (Config, error) {
 	issuer := envOr("JWT_ISSUER", "http://localhost:3001")
 	cfg := Config{
 		Addr:                ListenAddr(),
+		ServiceName:         envOr("OTEL_SERVICE_NAME", "iag-project-management"),
+		Environment:         envOr("APP_ENV", "development"),
 		JWTIssuer:           issuer,
 		JWKSURL:             envOr("JWKS_URL", strings.TrimRight(issuer, "/")+"/.well-known/jwks.json"),
 		Audience:            envOr("AUDIENCE", "iag.project-management"),
