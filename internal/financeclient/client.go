@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,11 @@ import (
 
 	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 )
+
+// ErrAPItemExists means finance already has an AP item for this documentRef
+// (HTTP 409). Because document_ref is unique in finance, this is the
+// idempotent "already booked" outcome — callers should treat it as success.
+var ErrAPItemExists = errors.New("ap item already exists for documentRef")
 
 // Client posts AP open items to iag-finance.
 type Client struct {
@@ -85,6 +91,11 @@ func (c *Client) CreateAPItem(ctx context.Context, in CreateAPInput) (string, er
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusConflict {
+		// Already booked (unique document_ref). Idempotent success — return the
+		// documentRef so the caller can record the link and stop retrying.
+		return in.DocumentRef, ErrAPItemExists
+	}
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("finance ap %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
