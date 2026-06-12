@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -14,19 +15,24 @@ func requisitionDocumentRef(reqID int) string {
 	return fmt.Sprintf("PM-REQ-%d", reqID)
 }
 
-func (h *Handler) bookApprovedRequisitionAP(ctx context.Context, owner string, reqID int) {
+// bookApprovedRequisitionAP books the AP open item for an approved requisition.
+// It returns an error when the booking should be RETRIED (transient finance
+// outage, persist failure): the caller propagates it so the consumer redelivers
+// the event instead of marking it processed. A finance 409 (already booked) is
+// treated as success — the AP exists, so we record the ref and stop.
+func (h *Handler) bookApprovedRequisitionAP(ctx context.Context, owner string, reqID int) error {
 	if h.Finance == nil || !h.Finance.Enabled() {
-		return
+		return nil
 	}
 	ws, err := h.Repo.GetByOwner(ctx, owner)
 	if err != nil {
-		slog.Warn("finance ap: load workspace failed", "owner", owner, "err", err)
-		return
+		return fmt.Errorf("finance ap: load workspace %s: %w", owner, err)
 	}
 	var doc models.Document
 	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+		// Corrupt workspace JSON won't fix itself on retry — log and give up.
 		slog.Warn("finance ap: decode workspace failed", "owner", owner, "err", err)
-		return
+		return nil
 	}
 	var req *models.Requisition
 	for i := range doc.Requisitions {
@@ -36,10 +42,10 @@ func (h *Handler) bookApprovedRequisitionAP(ctx context.Context, owner string, r
 		}
 	}
 	if req == nil || req.Status != "approved" {
-		return
+		return nil
 	}
 	if req.FinanceApRef != nil && *req.FinanceApRef != "" {
-		return
+		return nil // already booked
 	}
 	currency := req.Currency
 	if currency == "" {
@@ -60,11 +66,13 @@ func (h *Handler) bookApprovedRequisitionAP(ctx context.Context, owner string, r
 		Amount:      fmt.Sprintf("%.2f", req.Amount),
 		Currency:    currency,
 	})
-	if err != nil {
-		slog.Warn("finance ap: create failed", "owner", owner, "reqId", reqID, "err", err)
-		return
+	if err != nil && !errors.Is(err, financeclient.ErrAPItemExists) {
+		// Transient/unknown failure — retry by surfacing the error.
+		return fmt.Errorf("finance ap: create for requisition #%d: %w", reqID, err)
 	}
-	_, err = h.Svc.Mutate(ctx, owner, func(d *models.Document) error {
+	// On ErrAPItemExists, apRef is the documentRef of the already-booked item.
+
+	if _, err := h.Svc.Mutate(ctx, owner, func(d *models.Document) error {
 		for i := range d.Requisitions {
 			if d.Requisitions[i].ID != reqID {
 				continue
@@ -75,10 +83,12 @@ func (h *Handler) bookApprovedRequisitionAP(ctx context.Context, owner string, r
 			return nil
 		}
 		return nil
-	})
-	if err != nil {
-		slog.Warn("finance ap: persist ref failed", "owner", owner, "reqId", reqID, "err", err)
+	}); err != nil {
+		// AP exists in finance but PM didn't record the ref — retry so the
+		// link isn't orphaned (the next attempt hits the 409 idempotent path).
+		return fmt.Errorf("finance ap: persist ref for requisition #%d: %w", reqID, err)
 	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

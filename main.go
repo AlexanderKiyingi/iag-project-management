@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/alvor-technologies/iag-authclient"
+	platformotel "github.com/alvor-technologies/iag-platform-go/otel"
 	platformserviceauth "github.com/alvor-technologies/iag-platform-go/serviceauth"
 	pmdb "github.com/iag/project-management/backend/db"
 	"github.com/iag/project-management/backend/internal/audit"
@@ -49,6 +50,20 @@ func main() {
 	if err != nil {
 		slog.Error("config", "err", err)
 		os.Exit(1)
+	}
+
+	// OpenTelemetry → otel-collector:4317 (non-blocking dial).
+	if tp, err := platformotel.Init(ctx, platformotel.Config{
+		ServiceName: cfg.ServiceName,
+		Environment: cfg.Environment,
+	}); err != nil {
+		slog.Warn("otel disabled", "err", err)
+	} else {
+		defer func() {
+			sc, c := context.WithTimeout(context.Background(), 5*time.Second)
+			defer c()
+			_ = tp.Shutdown(sc)
+		}()
 	}
 
 	if os.Getenv("DATABASE_URL") == "" {

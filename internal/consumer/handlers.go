@@ -133,7 +133,11 @@ func (h *Handler) handleRequisition(ctx context.Context, env platformevents.Enve
 		return err
 	}
 	if found && outcome == "approved" {
-		h.bookApprovedRequisitionAP(ctx, owner, reqID)
+		// Propagate a booking failure so the consumer redelivers (retries)
+		// rather than marking the event processed with the AP unbooked.
+		if err := h.bookApprovedRequisitionAP(ctx, owner, reqID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
