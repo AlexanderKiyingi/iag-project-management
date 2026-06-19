@@ -5,8 +5,19 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+const (
+	// writeWait bounds a single write; pongWait is the read deadline a pong must
+	// renew; PingPeriod (exported for the handler's heartbeat goroutine) must be
+	// < pongWait. Mirrors shared/services/notifications and the contract-management
+	// hub so heartbeat timing is uniform across the platform.
+	writeWait  = 10 * time.Second
+	PongWait   = 60 * time.Second
+	PingPeriod = (PongWait * 9) / 10
 )
 
 type WorkspacePush struct {
@@ -53,6 +64,11 @@ func ParseChannel(key string) Channel {
 type Hub struct {
 	mu    sync.RWMutex
 	conns map[string]map[*websocket.Conn]subscription
+	// writeMu holds one mutex per live connection. gorilla allows only one
+	// concurrent writer per conn, so every write (snapshot, broadcast, ping)
+	// must serialize through it — without this, two concurrent broadcasts (or a
+	// broadcast racing the heartbeat ping) corrupt the frame stream.
+	writeMu map[*websocket.Conn]*sync.Mutex
 }
 
 type subscription struct {
@@ -60,7 +76,33 @@ type subscription struct {
 }
 
 func NewHub() *Hub {
-	return &Hub{conns: make(map[string]map[*websocket.Conn]subscription)}
+	return &Hub{
+		conns:   make(map[string]map[*websocket.Conn]subscription),
+		writeMu: make(map[*websocket.Conn]*sync.Mutex),
+	}
+}
+
+// WriteText sends a text frame to conn under its per-connection write lock.
+func (h *Hub) WriteText(conn *websocket.Conn, payload []byte) error {
+	return h.writeFrame(conn, websocket.TextMessage, payload)
+}
+
+// Ping sends a websocket control ping to conn under its per-connection write
+// lock. Used by the handler's heartbeat goroutine.
+func (h *Hub) Ping(conn *websocket.Conn) error {
+	return h.writeFrame(conn, websocket.PingMessage, nil)
+}
+
+func (h *Hub) writeFrame(conn *websocket.Conn, messageType int, payload []byte) error {
+	h.mu.RLock()
+	mu := h.writeMu[conn]
+	h.mu.RUnlock()
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+	return conn.WriteMessage(messageType, payload)
 }
 
 // Register subscribes a connection to the user's primary channel. Kept
@@ -99,6 +141,9 @@ func (h *Hub) RegisterChannel(ch Channel, conn *websocket.Conn) {
 	}
 	s.channels[key] = struct{}{}
 	subs[conn] = s
+	if _, ok := h.writeMu[conn]; !ok {
+		h.writeMu[conn] = &sync.Mutex{}
+	}
 }
 
 // UnregisterChannel removes a connection from a single channel.
@@ -133,6 +178,7 @@ func (h *Hub) UnregisterAll(conn *websocket.Conn) {
 			}
 		}
 	}
+	delete(h.writeMu, conn)
 }
 
 // Broadcast publishes a workspace push to every connection on the
@@ -161,7 +207,7 @@ func (h *Hub) BroadcastChannel(ch Channel, push WorkspacePush) {
 	}
 	h.mu.RUnlock()
 	for _, c := range conns {
-		if err := c.WriteMessage(websocket.TextMessage, payload); err != nil {
+		if err := h.WriteText(c, payload); err != nil {
 			slog.Debug("ws write", "channel", key, "err", err)
 		}
 	}

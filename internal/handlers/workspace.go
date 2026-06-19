@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -12,6 +13,7 @@ import (
 	"github.com/iag/project-management/backend/internal/auth"
 	"github.com/iag/project-management/backend/internal/middleware"
 	"github.com/iag/project-management/backend/internal/models"
+	"github.com/iag/project-management/backend/internal/realtime"
 	"github.com/iag/project-management/backend/internal/store"
 	"github.com/iag/project-management/backend/internal/workspace"
 	"github.com/alvor-technologies/iag-platform-go/apierr"
@@ -164,8 +166,41 @@ func (h *Workspace) ws(c *gin.Context) {
 	if err == nil {
 		if push, pushErr := h.Svc.FilteredPush(ws, uid); pushErr == nil {
 			raw, _ := json.Marshal(push)
-			_ = conn.WriteMessage(websocket.TextMessage, raw)
+			if h.Svc.Hub != nil {
+				_ = h.Svc.Hub.WriteText(conn, raw)
+			} else {
+				_ = conn.WriteMessage(websocket.TextMessage, raw)
+			}
 		}
+	}
+
+	// Heartbeat: ping on an interval and require a pong inside PongWait so a
+	// silently dropped socket (idle past an LB/proxy timeout) is detected here
+	// instead of surfacing as a failed write on the next broadcast. All writes
+	// go through the hub's per-connection lock; gorilla allows one writer only.
+	conn.SetReadLimit(512)
+	_ = conn.SetReadDeadline(time.Now().Add(realtime.PongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(realtime.PongWait))
+	})
+	if h.Svc.Hub != nil {
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			ticker := time.NewTicker(realtime.PingPeriod)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					if err := h.Svc.Hub.Ping(conn); err != nil {
+						_ = conn.Close() // unblocks the read loop below
+						return
+					}
+				}
+			}
+		}()
 	}
 
 	for {
