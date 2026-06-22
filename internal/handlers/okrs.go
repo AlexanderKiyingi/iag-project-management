@@ -26,7 +26,7 @@ func (h *Entities) addKeyResult(c *gin.Context) {
 		Target  float64 `json:"target"`
 		Unit    string  `json:"unit"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Name) == "" || body.Target <= 0 {
+	if err := bindJSONCoerced(c, &body); err != nil || strings.TrimSpace(body.Name) == "" || body.Target <= 0 {
 		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body (need name and positive target)")
 		return
 	}

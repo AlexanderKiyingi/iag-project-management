@@ -203,7 +203,7 @@ func (h *Entities) createTask(c *gin.Context) {
 		Type      string `json:"type"`
 		SprintID  *int   `json:"sprintId"`
 	}
-	if err := c.ShouldBindJSON(&in); err != nil || in.Name == "" {
+	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" {
 		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
@@ -893,7 +893,7 @@ func (h *Entities) goalProgress(c *gin.Context) {
 	var body struct {
 		Delta int `json:"delta"`
 	}
-	_ = c.ShouldBindJSON(&body)
+	_ = bindJSONCoerced(c, &body)
 	mutate(c, h.Svc, func(d *models.Document) error {
 		for i := range d.Goals {
 			if d.Goals[i].ID != id {
@@ -1277,7 +1277,7 @@ func (h *Entities) putProject(c *gin.Context) {
 
 func (h *Entities) createRequisition(c *gin.Context) {
 	var req models.Requisition
-	if err := c.ShouldBindJSON(&req); err != nil || req.Title == "" {
+	if err := bindJSONCoerced(c, &req); err != nil || req.Title == "" {
 		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
