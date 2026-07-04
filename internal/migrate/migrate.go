@@ -15,8 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// The ledger is schema-qualified to `iag_pm` so it can never collide with
+// another service's global public.schema_migrations on the shared Railway
+// database. db.Connect pins search_path to `iag_pm, public`.
 const schemaMigrationsDDL = `
-CREATE TABLE IF NOT EXISTS schema_migrations (
+CREATE TABLE IF NOT EXISTS iag_pm.schema_migrations (
     version    TEXT PRIMARY KEY,
     checksum   TEXT NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -29,13 +32,25 @@ type Migration struct {
 }
 
 func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
+	migs, err := load(fsys)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS iag_pm`); err != nil {
+		return nil, fmt.Errorf("create schema iag_pm: %w", err)
+	}
 	if _, err := pool.Exec(ctx, schemaMigrationsDDL); err != nil {
 		return nil, fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	migs, err := load(fsys)
-	if err != nil {
-		return nil, err
+	// Safety net for the shared-database cutover: if this service historically
+	// ran without the ?search_path= DSN param its ledger may sit in the global
+	// public.schema_migrations. Stamp those versions into the per-service ledger
+	// with current file checksums so nothing re-runs. No-op when the ledger
+	// already lives in iag_pm or on a fresh database.
+	if err := seedFromLegacyLedger(ctx, pool, migs); err != nil {
+		return nil, fmt.Errorf("seed from legacy ledger: %w", err)
 	}
 
 	applied, err := loadApplied(ctx, pool)
@@ -67,7 +82,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 				"file", m.Checksum,
 			)
 			if _, err := pool.Exec(ctx,
-				`UPDATE schema_migrations SET checksum = $1 WHERE version = $2`,
+				`UPDATE iag_pm.schema_migrations SET checksum = $1 WHERE version = $2`,
 				m.Checksum, m.Version); err != nil {
 				return newlyApplied, fmt.Errorf(
 					"migration %s re-stamp checksum: %w", m.Version, err,
@@ -76,6 +91,35 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		}
 	}
 	return newlyApplied, nil
+}
+
+// seedFromLegacyLedger stamps this service's shipped versions into iag_pm's
+// ledger using the CURRENT file checksums, for any version already recorded in a
+// legacy global public.schema_migrations. Idempotent via ON CONFLICT; no-op when
+// no legacy ledger exists or none of its versions match. Guards the cutover for
+// deployments whose DATABASE_URL ever lacked the ?search_path= param.
+func seedFromLegacyLedger(ctx context.Context, pool *pgxpool.Pool, migs []Migration) error {
+	var hasLegacy bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'public' AND table_name = 'schema_migrations'
+		)`).Scan(&hasLegacy); err != nil {
+		return err
+	}
+	if !hasLegacy {
+		return nil
+	}
+	for _, m := range migs {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO iag_pm.schema_migrations (version, checksum)
+			SELECT $1, $2
+			WHERE EXISTS (SELECT 1 FROM public.schema_migrations WHERE version = $1)
+			ON CONFLICT (version) DO NOTHING`, m.Version, m.Checksum); err != nil {
+			return fmt.Errorf("seed %s: %w", m.Version, err)
+		}
+	}
+	return nil
 }
 
 func load(fsys fs.FS) ([]Migration, error) {
@@ -110,7 +154,7 @@ type appliedRow struct {
 }
 
 func loadApplied(ctx context.Context, pool *pgxpool.Pool) (map[string]appliedRow, error) {
-	rows, err := pool.Query(ctx, `SELECT version, checksum FROM schema_migrations`)
+	rows, err := pool.Query(ctx, `SELECT version, checksum FROM iag_pm.schema_migrations`)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +186,7 @@ func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`,
+		`INSERT INTO iag_pm.schema_migrations (version, checksum) VALUES ($1, $2)`,
 		m.Version, m.Checksum); err != nil {
 		if strings.Contains(err.Error(), "23505") {
 			return errors.New("concurrent migration: version already applied by another process")
