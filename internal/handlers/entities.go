@@ -127,6 +127,8 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.POST("/files", authz, h.createFile)
 	rg.GET("/files/:id", auth.RequireWorkspaceRead(), h.getFile)
 	rg.PUT("/projects/:id", authz, h.putProject)
+	rg.GET("/projects", auth.RequireWorkspaceRead(), h.listProjects)
+	rg.DELETE("/projects/:id", authz, h.deleteProject)
 	rg.POST("/projects/:id/status", authz, h.postProjectStatus)
 	rg.GET("/projects/:id/status", auth.RequireWorkspaceRead(), h.listProjectStatus)
 	rg.POST("/projects/:id/sections", authz, h.createSection)
@@ -134,6 +136,7 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.PATCH("/sections/:id", authz, h.patchSection)
 	rg.DELETE("/sections/:id", authz, h.deleteSection)
 	rg.POST("/requisitions", authz, h.createRequisition)
+	rg.GET("/requisitions", auth.RequireWorkspaceRead(), h.listRequisitions)
 
 	rg.POST("/workspace/members", authz, auth.RequirePerm("pm.admin"), h.addMember)
 	rg.PATCH("/workspace/org", authz, auth.RequirePerm("pm.admin"), h.setOrg)
@@ -141,6 +144,8 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.GET("/orgs", auth.RequireWorkspaceRead(), h.listOrgs)
 	rg.GET("/orgs/:orgId/members", auth.RequireWorkspaceRead(), h.listOrgMembers)
 	rg.GET("/workspace/workload", auth.RequireWorkspaceRead(), h.workspaceWorkload)
+
+	h.registerProcurementRoutes(rg, authz)
 }
 
 func (h *Entities) deleteAudit(c *gin.Context) {

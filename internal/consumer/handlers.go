@@ -22,8 +22,10 @@ import (
 
 // Event types PM listens for on iag.commercial.
 const (
-	TypeRequisitionApproved   = "procurement.requisition.approved"
-	TypeRequisitionRejected   = "procurement.requisition.rejected"
+	TypeRequisitionApproved            = "procurement.requisition.approved"
+	TypeRequisitionRejected            = "procurement.requisition.rejected"
+	TypePurchaseRequisitionApproved    = "procurement.purchase_requisition.approved"
+	TypePurchaseRequisitionRejected    = "procurement.purchase_requisition.rejected"
 	TypeContractCreated       = "contracts.contract.created"
 	TypeContractUpdated       = "contracts.contract.updated"
 	TypeContractDeleted       = "contracts.contract.deleted"
@@ -59,6 +61,10 @@ func (h *Handler) Handle(ctx context.Context, env platformevents.Envelope) error
 		return h.handleRequisition(ctx, env, "approved")
 	case TypeRequisitionRejected:
 		return h.handleRequisition(ctx, env, "rejected")
+	case TypePurchaseRequisitionApproved:
+		return h.handlePurchaseRequisition(ctx, env, "Approved")
+	case TypePurchaseRequisitionRejected:
+		return h.handlePurchaseRequisition(ctx, env, "Rejected")
 	case TypeContractCreated:
 		return h.handleContractCreated(ctx, env)
 	case TypeContractUpdated, TypeContractDeleted:
@@ -94,7 +100,6 @@ func (h *Handler) handleRequisition(ctx context.Context, env platformevents.Enve
 	if !ok {
 		return platformevents.Permanent(fmt.Errorf("requisition event has non-numeric requisitionId %q", reqIDStr))
 	}
-
 	actor := stringField(env.Data, "approvedBy")
 	if actor == "" {
 		actor = "procurement"
@@ -140,6 +145,35 @@ func (h *Handler) handleRequisition(ctx context.Context, env platformevents.Enve
 		}
 	}
 	return nil
+}
+
+func (h *Handler) handlePurchaseRequisition(ctx context.Context, env platformevents.Envelope, status string) error {
+	owner := stringField(env.Data, "workspaceOwnerUserId")
+	prID := stringField(env.Data, "purchaseRequisitionId")
+	if prID == "" {
+		prID = stringField(env.Data, "requisitionId")
+	}
+	if owner == "" || prID == "" {
+		return platformevents.Permanent(fmt.Errorf("purchase requisition event missing workspaceOwnerUserId or purchaseRequisitionId"))
+	}
+	actor := stringField(env.Data, "approvedBy")
+	if actor == "" {
+		actor = "procurement"
+	}
+	_, err := h.Svc.Mutate(ctx, owner, func(d *models.Document) error {
+		for i := range d.PurchaseRequisitions {
+			if d.PurchaseRequisitions[i].ID != prID {
+				continue
+			}
+			d.PurchaseRequisitions[i].Status = status
+			models.AppendAudit(d, actor, "procurement.purchase_requisition."+strings.ToLower(status),
+				fmt.Sprintf("Purchase requisition %s %s by %s", prID, status, actor), nil)
+			return nil
+		}
+		slog.Info("purchase requisition not found for upstream event", "owner", owner, "id", prID, "status", status)
+		return nil
+	})
+	return err
 }
 
 func (h *Handler) handleContractCreated(ctx context.Context, env platformevents.Envelope) error {

@@ -29,8 +29,9 @@ const (
 	// services (procurement) can echo it back on approval/rejection, letting
 	// PM find the originating workspace without a global requisition index.
 	TypePMAlertRaised        = "pm.alert.raised"
-	TypeRequisitionSubmitted = "pm.requisition.submitted"
-	TypeTaskAssigned         = "pm.task.assigned"
+	TypeRequisitionSubmitted         = "pm.requisition.submitted"
+	TypePurchaseRequisitionSubmitted = "pm.purchase_requisition.submitted"
+	TypeTaskAssigned                 = "pm.task.assigned"
 	TypeMentionCreated       = "pm.mention.created"
 )
 
