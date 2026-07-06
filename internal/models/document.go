@@ -33,6 +33,19 @@ type Document struct {
 	DesktopNotificationsEnabled bool            `json:"desktopNotificationsEnabled"`
 	Theme                string                 `json:"theme"`
 	OrgID                string                 `json:"orgId,omitempty"`
+	// Procurement workspace (iag-pm frontend); distinct from PM expense requisitions above.
+	Vendors              []ProcurementVendor           `json:"vendors,omitempty"`
+	Items                []ProcurementItem             `json:"items,omitempty"`
+	Budgets              []ProcurementBudget           `json:"budgets,omitempty"`
+	PurchaseRequisitions []ProcurementRequisition      `json:"purchaseRequisitions,omitempty"`
+	Rfqs                 []ProcurementRfq              `json:"rfqs,omitempty"`
+	Pos                  []ProcurementPurchaseOrder    `json:"pos,omitempty"`
+	Grns                 []ProcurementGrn              `json:"grns,omitempty"`
+	Invoices             []ProcurementInvoice          `json:"invoices,omitempty"`
+	Contracts            []ProcurementContract         `json:"contracts,omitempty"`
+	Payments             []ProcurementPayment          `json:"payments,omitempty"`
+	ProcurementAudit     []ProcurementAuditEntry       `json:"procurementAudit,omitempty"`
+	Profile              *ProcurementProfile           `json:"profile,omitempty"`
 }
 
 type Project struct {
