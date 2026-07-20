@@ -25,6 +25,7 @@ type Config struct {
 	PublicAPIURL        string
 	UsersAPIURL         string // iag-users base (gateway: .../api/v1/users)
 	FinanceAPIURL       string // iag-finance base (gateway: .../api/v1/finance)
+	ChatAPIURL          string // iag-chat base (gateway: .../api/v1/chat); empty disables project chat threads
 	AutoMigrate         bool
 	KafkaBrokers        []string
 	EventBusEnabled     bool
@@ -61,6 +62,7 @@ func Load() (Config, error) {
 		PublicAPIURL:        strings.TrimRight(strings.TrimSpace(envOr("PUBLIC_API_URL", "")), "/"),
 		UsersAPIURL:         usersAPIURL(envOr("PUBLIC_API_URL", ""), envOr("USERS_API_URL", "")),
 		FinanceAPIURL:       financeAPIURL(envOr("PUBLIC_API_URL", ""), envOr("FINANCE_API_URL", "")),
+		ChatAPIURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("CHAT_API_URL")), "/"),
 		AutoMigrate:         envOr("AUTO_MIGRATE", "true") != "false",
 		EventBusEnabled:     strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
 		UploadDir:           envOr("PM_UPLOAD_DIR", "./data/pm-uploads"),

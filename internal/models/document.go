@@ -65,6 +65,9 @@ type Project struct {
 	Visibility        string                `json:"visibility,omitempty"`
 	MemberIDs         []string              `json:"memberIds,omitempty"`
 	LinkedContracts   []ProjectContractLink `json:"linkedContracts,omitempty"`
+	// ConversationID is the iag-chat thread for this project's discussion,
+	// find-or-created on project creation. Empty when chat is not configured.
+	ConversationID string `json:"conversationId,omitempty"`
 }
 
 // ProjectContractLink records a contract-management contract tied to this project.

@@ -10,9 +10,11 @@
 FROM golang:1.25-alpine AS base
 RUN apk add --no-cache git ca-certificates
 ENV PLATFORM_GO_DEP=/deps/platform-go
+ENV CHAT_CLIENT_DEP=/deps/chat-client
 
 FROM base AS platform-go-copy
 COPY shared/platform-go ${PLATFORM_GO_DEP}
+COPY shared/services/chat-client ${CHAT_CLIENT_DEP}
 
 FROM base AS build-standalone
 # Standalone (iag-project-management repo root): the meta-repo is private, so
@@ -22,18 +24,20 @@ FROM base AS build-standalone
 # replace directive at it.
 WORKDIR /src
 COPY third_party/platform-go ${PLATFORM_GO_DEP}
+COPY third_party/chat-client ${CHAT_CLIENT_DEP}
 COPY go.mod go.sum ./
 COPY pkg/authclient ./pkg/authclient
 RUN go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP} \
+    -replace=github.com/alvor-technologies/iag-chat-client=${CHAT_CLIENT_DEP} \
     && go mod download
 COPY . .
 ARG VERSION=dev
 # `COPY . .` restored go.mod from the build context, which still carries the
-# meta-repo-only `replace => ../../../shared/platform-go`. That path does not
-# exist inside the build container, so re-apply the vendored replace before
-# build.
+# meta-repo-only `replace => ../../../shared/...` paths. Those do not exist
+# inside the build container, so re-apply the vendored replaces before build.
 RUN set -eu; \
-    go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP}; \
+    go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP} \
+        -replace=github.com/alvor-technologies/iag-chat-client=${CHAT_CLIENT_DEP}; \
     mkdir -p /out; \
     for cmd in . ./cmd/healthcheck ./cmd/jobs; do \
         name=$(basename "$cmd"); [ "$name" = "." ] && name=api; \
@@ -45,10 +49,12 @@ RUN set -eu; \
 
 FROM base AS build-monorepo
 COPY --from=platform-go-copy ${PLATFORM_GO_DEP} ${PLATFORM_GO_DEP}
+COPY --from=platform-go-copy ${CHAT_CLIENT_DEP} ${CHAT_CLIENT_DEP}
 WORKDIR /src/services/commercial/project-management
 COPY services/commercial/project-management/go.mod services/commercial/project-management/go.sum ./
 COPY services/commercial/project-management/pkg/authclient ./pkg/authclient
 RUN go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP} \
+    -replace=github.com/alvor-technologies/iag-chat-client=${CHAT_CLIENT_DEP} \
     && go mod download
 COPY services/commercial/project-management/ .
 ARG VERSION=dev

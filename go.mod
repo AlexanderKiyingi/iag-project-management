@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/alvor-technologies/iag-authclient v0.0.0
+	github.com/alvor-technologies/iag-chat-client v0.0.0
 	github.com/alvor-technologies/iag-platform-go v0.0.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
@@ -71,3 +72,5 @@ require (
 replace github.com/alvor-technologies/iag-authclient => ./pkg/authclient
 
 replace github.com/alvor-technologies/iag-platform-go => ../../../shared/platform-go
+
+replace github.com/alvor-technologies/iag-chat-client => ../../../shared/services/chat-client

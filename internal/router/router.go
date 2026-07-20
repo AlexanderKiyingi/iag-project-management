@@ -11,7 +11,9 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/iag/project-management/backend/internal/audit"
+	"github.com/iag/project-management/backend/internal/auth"
 	"github.com/iag/project-management/backend/internal/automation"
+	"github.com/iag/project-management/backend/internal/chat"
 	"github.com/iag/project-management/backend/internal/config"
 	"github.com/iag/project-management/backend/internal/docs"
 	"github.com/iag/project-management/backend/internal/events"
@@ -94,6 +96,11 @@ func New(opts Options) *gin.Engine {
 	}
 
 	api := r.Group("/api/v1")
+	// Default-deny baseline: every /api/v1 route requires an authenticated
+	// principal. Individual routes still layer their own RequireWorkspaceRead/
+	// Write/perm checks; this only ensures a route that forgets to can never be
+	// silently public (closes the AttachPrincipal fail-open-by-omission).
+	api.Use(auth.RequireUser())
 	svc := &workspace.Service{
 		Repo:            opts.Repo,
 		Hub:             opts.Hub,
@@ -104,7 +111,7 @@ func New(opts Options) *gin.Engine {
 		WebhookEnqueuer: webhookAdapter{store: opts.Webhooks},
 	}
 	(&handlers.Workspace{Svc: svc, Platform: opts.PlatformAuth}).Register(api)
-	(&handlers.Entities{Svc: svc, Files: opts.FileStore, Users: usersclient.New(opts.Cfg.UsersAPIURL)}).Register(api)
+	(&handlers.Entities{Svc: svc, Files: opts.FileStore, Users: usersclient.New(opts.Cfg.UsersAPIURL), Chat: chat.New(opts.Cfg)}).Register(api)
 	(&handlers.PlatformStatus{Cfg: opts.Cfg, Repo: opts.Repo}).Register(api)
 	(&handlers.Audit{Pool: opts.Repo.Pool()}).Register(api)
 	(&handlers.Search{Svc: opts.Search, WsSvc: svc}).Register(api)

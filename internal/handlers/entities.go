@@ -1,18 +1,22 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/google/uuid"
 
 	"github.com/iag/project-management/backend/internal/auth"
+	"github.com/iag/project-management/backend/internal/chat"
 	"github.com/iag/project-management/backend/internal/consumer"
 	"github.com/iag/project-management/backend/internal/events"
 	"github.com/iag/project-management/backend/internal/files"
@@ -29,6 +33,7 @@ type Entities struct {
 	Svc   *workspace.Service
 	Files *files.Store
 	Users *usersclient.Client
+	Chat  *chat.Service
 }
 
 func (h *Entities) Register(rg *gin.RouterGroup) {
@@ -230,7 +235,7 @@ func (h *Entities) createTask(c *gin.Context) {
 			Project:   in.Project,
 			Section:   in.Section,
 			Assignee:  in.Assignee,
-			Priority:  in.Priority,
+			Priority:  normalizeTaskPriority(in.Priority),
 			Due:       in.Due,
 			StartDate: in.StartDate,
 			EndDate:   in.EndDate,
@@ -334,7 +339,7 @@ func applyTaskPatch(t *models.Task, patch map[string]any) {
 		t.EndDate = v
 	}
 	if v, ok := patch["priority"].(string); ok {
-		t.Priority = v
+		t.Priority = normalizeTaskPriority(v)
 	}
 	if v, ok := patch["project"].(string); ok {
 		t.Project = v
@@ -436,6 +441,25 @@ func normalizeTaskType(t string) string {
 		return models.TaskTypeApproval
 	default:
 		return models.TaskTypeTask
+	}
+}
+
+// normalizeTaskPriority coerces free-form priority input to the lowercase set
+// the task board/report rollups group on (low/medium/high), so mixed-casing or
+// junk from the client can't fragment those groupings. Empty is preserved
+// (unprioritised); any other unknown value defaults to medium.
+func normalizeTaskPriority(p string) string {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "":
+		return ""
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	default:
+		return "medium"
 	}
 }
 
@@ -1270,14 +1294,111 @@ func (h *Entities) putProject(c *gin.Context) {
 		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
 		return
 	}
+	switch p.Visibility {
+	case "", models.ProjectVisibilityWorkspace, models.ProjectVisibilityMembersOnly:
+	default:
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid visibility")
+		return
+	}
 	p.ID = id
+	isAdmin := auth.HasPerm(c, "pm.admin")
+	isNew := false
+	statusChanged := false
+	prevStatus := ""
 	mutate(c, h.Svc, func(d *models.Document) error {
 		if d.Projects == nil {
 			d.Projects = map[string]models.Project{}
 		}
+		if existing, ok := d.Projects[id]; ok {
+			if existing.Status != "" && p.Status != existing.Status {
+				statusChanged = true
+				prevStatus = existing.Status
+			}
+			// Access-control fields (visibility + member list) are the guard for
+			// members_only filtering; only a workspace admin may change them.
+			// A plain writer's PUT preserves the existing values so it cannot
+			// widen a members_only project or tamper with its member list.
+			if !isAdmin {
+				p.Visibility = existing.Visibility
+				p.MemberIDs = existing.MemberIDs
+			}
+			// Preserve server-managed fields a client PUT typically omits, so a
+			// partial round-trip does not wipe them.
+			if p.StatusHistory == nil {
+				p.StatusHistory = existing.StatusHistory
+			}
+			if p.LinkedContracts == nil {
+				p.LinkedContracts = existing.LinkedContracts
+			}
+			// ConversationID is server-managed; never let a client PUT set or
+			// wipe it.
+			p.ConversationID = existing.ConversationID
+		} else {
+			isNew = true
+			p.ConversationID = ""
+		}
 		d.Projects[id] = p
 		return nil
 	})
+	// A new project gets a chat discussion thread. Done async + best-effort so a
+	// chat outage never blocks or fails project creation; the conversation id is
+	// written back onto the project when the thread is ready.
+	if isNew && h.Chat != nil {
+		if uid, ok := userID(c); ok {
+			go h.ensureProjectThread(uid, id, p.Name, append([]string(nil), p.MemberIDs...))
+		}
+	}
+	// Status change → post a system line into the project's discussion thread.
+	if !isNew && statusChanged && h.Chat != nil {
+		go h.postProjectSystem(id, "Status changed: "+prevStatus+" → "+p.Status)
+	}
+}
+
+// postProjectSystem posts a system line into a project's discussion thread
+// (find-or-creating it by link). Runs in the background, best-effort.
+func (h *Entities) postProjectSystem(projectID, message string) {
+	if h.Chat == nil || projectID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.Chat.PostSystem(ctx, projectID, message); err != nil {
+		slog.Warn("project chat system post failed", "project", projectID, "err", err)
+	}
+}
+
+// ensureProjectThread find-or-creates a project's chat thread and persists its
+// conversation id back onto the project. Runs in the background off the request.
+func (h *Entities) ensureProjectThread(uid, projectID, title string, participants []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	// The creator must be a participant so they can read/post; then the project
+	// members. Dedup, drop empties.
+	seen := map[string]bool{}
+	parts := make([]string, 0, len(participants)+1)
+	for _, m := range append([]string{uid}, participants...) {
+		if m != "" && !seen[m] {
+			seen[m] = true
+			parts = append(parts, m)
+		}
+	}
+	convID, err := h.Chat.EnsureProjectThread(ctx, projectID, title, parts)
+	if err != nil {
+		slog.Warn("project chat thread create failed", "project", projectID, "err", err)
+		return
+	}
+	if convID == "" {
+		return
+	}
+	if _, err := h.Svc.Mutate(ctx, uid, func(d *models.Document) error {
+		if pr, ok := d.Projects[projectID]; ok && pr.ConversationID == "" {
+			pr.ConversationID = convID
+			d.Projects[projectID] = pr
+		}
+		return nil
+	}); err != nil {
+		slog.Warn("persist project conversation id failed", "project", projectID, "err", err)
+	}
 }
 
 func (h *Entities) createRequisition(c *gin.Context) {
