@@ -1287,6 +1287,19 @@ func (h *Entities) getFile(c *gin.Context) {
 	c.Data(http.StatusOK, ct, payload)
 }
 
+// nextProjectCode returns the next auto-generated project code (PRJ-NNNN) based
+// on the highest existing PRJ-NNNN suffix in the workspace.
+func nextProjectCode(d *models.Document) string {
+	max := 0
+	for _, p := range d.Projects {
+		var n int
+		if _, err := fmt.Sscanf(p.Code, "PRJ-%d", &n); err == nil && n > max {
+			max = n
+		}
+	}
+	return fmt.Sprintf("PRJ-%04d", max+1)
+}
+
 func (h *Entities) putProject(c *gin.Context) {
 	id := c.Param("id")
 	var p models.Project
@@ -1333,9 +1346,18 @@ func (h *Entities) putProject(c *gin.Context) {
 			// ConversationID is server-managed; never let a client PUT set or
 			// wipe it.
 			p.ConversationID = existing.ConversationID
+			// Preserve the existing code if a partial PUT omitted it.
+			if strings.TrimSpace(p.Code) == "" {
+				p.Code = existing.Code
+			}
 		} else {
 			isNew = true
 			p.ConversationID = ""
+			// Auto-generate a human project code when the client left it blank,
+			// so staff don't have to invent one.
+			if strings.TrimSpace(p.Code) == "" {
+				p.Code = nextProjectCode(d)
+			}
 		}
 		d.Projects[id] = p
 		return nil
