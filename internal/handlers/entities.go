@@ -1345,7 +1345,7 @@ func (h *Entities) putProject(c *gin.Context) {
 	// written back onto the project when the thread is ready.
 	if isNew && h.Chat != nil {
 		if uid, ok := userID(c); ok {
-			go h.ensureProjectThread(uid, id, p.Name, append([]string(nil), p.MemberIDs...))
+			go h.ensureProjectThread(uid, id, p.Name)
 		}
 	}
 	// Status change → post a system line into the project's discussion thread.
@@ -1369,19 +1369,38 @@ func (h *Entities) postProjectSystem(projectID, message string) {
 
 // ensureProjectThread find-or-creates a project's chat thread and persists its
 // conversation id back onto the project. Runs in the background off the request.
-func (h *Entities) ensureProjectThread(uid, projectID, title string, participants []string) {
+func (h *Entities) ensureProjectThread(uid, projectID, title string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
-	// The creator must be a participant so they can read/post; then the project
-	// members. Dedup, drop empties.
+
+	// Participants gate who can read/post the thread. Always the creator; then
+	// the members who can see the project — its explicit members for a
+	// members_only project, otherwise every active workspace member (a
+	// workspace-visible project is the whole team's).
 	seen := map[string]bool{}
-	parts := make([]string, 0, len(participants)+1)
-	for _, m := range append([]string{uid}, participants...) {
-		if m != "" && !seen[m] {
-			seen[m] = true
-			parts = append(parts, m)
+	var parts []string
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			parts = append(parts, id)
 		}
 	}
+	add(uid)
+	if doc, _, derr := h.Svc.LoadDocument(ctx, uid); derr == nil {
+		if pr, ok := doc.Projects[projectID]; ok && pr.Visibility == models.ProjectVisibilityMembersOnly {
+			for _, m := range pr.MemberIDs {
+				add(m)
+			}
+		} else {
+			for _, m := range doc.Members {
+				if m.Active == nil || *m.Active {
+					add(m.UserID)
+				}
+			}
+		}
+	}
+
 	convID, err := h.Chat.EnsureProjectThread(ctx, projectID, title, parts)
 	if err != nil {
 		slog.Warn("project chat thread create failed", "project", projectID, "err", err)
