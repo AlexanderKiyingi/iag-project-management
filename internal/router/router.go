@@ -110,7 +110,12 @@ func New(opts Options) *gin.Engine {
 		RuleNotify:      opts.RuleNotify,
 		WebhookEnqueuer: webhookAdapter{store: opts.Webhooks},
 	}
-	(&handlers.Workspace{Svc: svc, Platform: opts.PlatformAuth}).Register(api)
+	(&handlers.Workspace{
+		Svc:            svc,
+		Platform:       opts.PlatformAuth,
+		AllowedOrigins: splitAllowedOrigins(opts.Cfg.CORSOrigin),
+		AllowAnyOrigin: opts.Cfg.CORSOrigin == "*",
+	}).Register(api)
 	(&handlers.Entities{Svc: svc, Files: opts.FileStore, Users: usersclient.New(opts.Cfg.UsersAPIURL), Chat: chat.New(opts.Cfg)}).Register(api)
 	(&handlers.PlatformStatus{Cfg: opts.Cfg, Repo: opts.Repo}).Register(api)
 	(&handlers.Audit{Pool: opts.Repo.Pool()}).Register(api)
@@ -124,15 +129,24 @@ func corsMiddleware(allowed string) gin.HandlerFunc {
 	allowAny := allowed == "*"
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		if allowAny || (origin != "" && originAllowed(origin, allowedOrigins)) {
+		explicitlyAllowed := origin != "" && originAllowed(origin, allowedOrigins)
+		if explicitlyAllowed {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+			// Credentials only for an explicit allow-list match — never combined
+			// with a wildcard or an arbitrary reflected origin (the browser
+			// rejects `*` + credentials, and reflecting any origin with
+			// credentials would be unsafe). Bearer-token flows don't need it.
+			c.Header("Access-Control-Allow-Credentials", "true")
+		} else if allowAny {
+			// Permissive/dev mode: reflect the origin (or `*`) WITHOUT credentials.
 			if origin != "" {
 				c.Header("Access-Control-Allow-Origin", origin)
-			} else if allowAny {
+				c.Header("Vary", "Origin")
+			} else {
 				c.Header("Access-Control-Allow-Origin", "*")
 			}
-			c.Header("Vary", "Origin")
 		}
-		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, If-Match, X-Workspace-User")
 		c.Header("Access-Control-Expose-Headers", "ETag")

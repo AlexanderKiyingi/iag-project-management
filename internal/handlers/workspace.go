@@ -19,13 +19,33 @@ import (
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 type Workspace struct {
 	Svc      *workspace.Service
 	Platform *middleware.PlatformAuth
+	// AllowedOrigins / AllowAnyOrigin gate the workspace WebSocket upgrade so a
+	// disallowed site can't open a cross-origin socket (defense in depth on top
+	// of the ?token= auth). Mirrors the REST CORS allowlist.
+	AllowedOrigins []string
+	AllowAnyOrigin bool
+}
+
+// checkWSOrigin allows same-origin / non-browser (no Origin header) and any
+// explicitly allow-listed origin; everything else is rejected unless the service
+// is configured wide open (AllowAnyOrigin, e.g. dev).
+func (h *Workspace) checkWSOrigin(r *http.Request) bool {
+	if h.AllowAnyOrigin {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	for _, o := range h.AllowedOrigins {
+		if origin == o {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Workspace) Register(rg *gin.RouterGroup) {
@@ -150,7 +170,8 @@ func (h *Workspace) ws(c *gin.Context) {
 		return
 	}
 
-	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
+	upgrader := websocket.Upgrader{CheckOrigin: h.checkWSOrigin}
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
