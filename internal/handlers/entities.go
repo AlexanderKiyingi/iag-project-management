@@ -125,12 +125,17 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.POST("/chats", authz, h.createChat)
 	rg.POST("/chats/:id/read", authz, h.chatRead)
 	rg.POST("/chats/:id/mute", authz, h.chatMute)
+
+	// Inbox: :id may be a numeric notification id or the sentinel "all".
+	rg.POST("/notifications/:id/read", authz, h.notificationRead)
+	rg.POST("/notifications/:id/archive", authz, h.notificationArchive)
 	rg.POST("/messages", authz, h.postMessage)
 	rg.POST("/messages/:id/reactions", authz, h.addMessageReaction)
 	rg.DELETE("/messages/:id/reactions/:emoji", authz, h.removeMessageReaction)
 
 	rg.POST("/files", authz, h.createFile)
 	rg.GET("/files/:id", auth.RequireWorkspaceRead(), h.getFile)
+	rg.GET("/calendar.ics", auth.RequireWorkspaceRead(), h.calendarICS)
 	rg.PUT("/projects/:id", authz, h.putProject)
 	rg.GET("/projects", auth.RequireWorkspaceRead(), h.listProjects)
 	rg.DELETE("/projects/:id", authz, h.deleteProject)
@@ -1072,6 +1077,116 @@ func (h *Entities) chatRead(c *gin.Context) {
 	})
 }
 
+// calendarICS emits the workspace's dated tasks as an RFC 5545 iCalendar
+// feed (all-day VEVENTs), so staff can subscribe to / import their task
+// schedule in any calendar client.
+func (h *Entities) calendarICS(c *gin.Context) {
+	uid, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	doc, _, err := h.Svc.LoadDocument(c.Request.Context(), uid)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusInternalServerError, "load workspace")
+		return
+	}
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	var b strings.Builder
+	b.WriteString("BEGIN:VCALENDAR\r\n")
+	b.WriteString("VERSION:2.0\r\n")
+	b.WriteString("PRODID:-//IAG//Project Management//EN\r\n")
+	b.WriteString("CALSCALE:GREGORIAN\r\n")
+	b.WriteString("METHOD:PUBLISH\r\n")
+	b.WriteString("X-WR-CALNAME:IAG Project Tasks\r\n")
+	for _, t := range doc.Tasks {
+		if t.DeletedAt != "" {
+			continue
+		}
+		day := icsDate(t.Due)
+		if day == "" {
+			continue
+		}
+		summary := t.Name
+		if t.Done {
+			summary = "✓ " + summary
+		}
+		b.WriteString("BEGIN:VEVENT\r\n")
+		fmt.Fprintf(&b, "UID:pm-task-%d@iag-project-management\r\n", t.ID)
+		fmt.Fprintf(&b, "DTSTAMP:%s\r\n", stamp)
+		fmt.Fprintf(&b, "DTSTART;VALUE=DATE:%s\r\n", day)
+		fmt.Fprintf(&b, "SUMMARY:%s\r\n", icsEscape(summary))
+		if t.Desc != "" {
+			fmt.Fprintf(&b, "DESCRIPTION:%s\r\n", icsEscape(t.Desc))
+		}
+		if t.Assignee != "" {
+			fmt.Fprintf(&b, "ORGANIZER;CN=%s:mailto:noreply@iag.local\r\n", icsEscape(t.Assignee))
+		}
+		if t.Done {
+			b.WriteString("STATUS:CONFIRMED\r\n")
+		}
+		b.WriteString("END:VEVENT\r\n")
+	}
+	b.WriteString("END:VCALENDAR\r\n")
+	c.Header("Content-Type", "text/calendar; charset=utf-8")
+	c.Header("Content-Disposition", `attachment; filename="iag-tasks.ics"`)
+	c.String(http.StatusOK, b.String())
+}
+
+// icsDate normalises an ISO date/datetime to iCalendar DATE form (YYYYMMDD),
+// or "" when the input is not a parseable date.
+func icsDate(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) < 10 {
+		return ""
+	}
+	d := s[:10]
+	if _, err := time.Parse("2006-01-02", d); err != nil {
+		return ""
+	}
+	return strings.ReplaceAll(d, "-", "")
+}
+
+// icsEscape escapes a value for an iCalendar text field per RFC 5545 §3.3.11.
+func icsEscape(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, ";", "\\;")
+	s = strings.ReplaceAll(s, ",", "\\,")
+	s = strings.ReplaceAll(s, "\r\n", "\\n")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return s
+}
+
+// notificationRead marks a single inbox notification read, or every
+// notification when the path id is the sentinel "all".
+func (h *Entities) notificationRead(c *gin.Context) {
+	raw := c.Param("id")
+	all := raw == "all"
+	id, _ := strconv.Atoi(raw)
+	mutate(c, h.Svc, func(d *models.Document) error {
+		for i := range d.Notifications {
+			if all || d.Notifications[i].ID == id {
+				d.Notifications[i].Read = true
+			}
+		}
+		return nil
+	})
+}
+
+// notificationArchive hides a single notification (also marks it read).
+func (h *Entities) notificationArchive(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	mutate(c, h.Svc, func(d *models.Document) error {
+		for i := range d.Notifications {
+			if d.Notifications[i].ID == id {
+				d.Notifications[i].Archived = true
+				d.Notifications[i].Read = true
+				return nil
+			}
+		}
+		return nil
+	})
+}
+
 func (h *Entities) chatMute(c *gin.Context) {
 	chatID, _ := strconv.Atoi(c.Param("id"))
 	mutate(c, h.Svc, func(d *models.Document) error {
@@ -1349,6 +1464,11 @@ func (h *Entities) putProject(c *gin.Context) {
 			// Preserve the existing code if a partial PUT omitted it.
 			if strings.TrimSpace(p.Code) == "" {
 				p.Code = existing.Code
+			}
+			// Preserve the brief when a partial PUT (e.g. the create/edit
+			// dialog, which doesn't know the field) omits it.
+			if p.Brief == "" {
+				p.Brief = existing.Brief
 			}
 		} else {
 			isNew = true

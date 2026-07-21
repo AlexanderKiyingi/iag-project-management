@@ -55,6 +55,9 @@ type Project struct {
 	Icon          string                `json:"icon"`
 	Status        string                `json:"status"`
 	Code          string                `json:"code"`
+	// Brief is a free-text project brief / overview shown on the project
+	// detail page. Optional; preserved across partial PUTs that omit it.
+	Brief         string                `json:"brief,omitempty"`
 	StatusHistory []ProjectStatusUpdate `json:"statusHistory,omitempty"`
 	// Visibility controls which workspace members can see the project
 	// in the document. Empty string defaults to ProjectVisibilityWorkspace
@@ -293,6 +296,9 @@ type WorkspaceFile struct {
 	I       string `json:"i"`
 	D       string `json:"d"`
 	Project string `json:"project"`
+	// Task optionally anchors the file to a single task, so attachments can be
+	// scoped in the task detail view. Zero means project- or workspace-level.
+	Task    int    `json:"task,omitempty"`
 	Data    string `json:"data"`
 }
 
