@@ -47,6 +47,9 @@ type ProcurementBudget struct {
 	Spent     float64 `json:"spent"`
 	Remaining float64 `json:"remaining"`
 	Dept      string  `json:"dept"`
+	// ProjectID optionally anchors a budget line to a project (empty =
+	// workspace/department level). Persisted with the workspace document.
+	ProjectID string  `json:"projectId,omitempty"`
 }
 
 type ProcurementLineItem struct {

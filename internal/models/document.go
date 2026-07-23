@@ -174,6 +174,9 @@ type Goal struct {
 	Status      string       `json:"status"`
 	Period      string       `json:"period"`
 	Team        string       `json:"team"`
+	// ProjectID optionally anchors the goal to a project so a project can own
+	// its OKRs (empty = workspace-level goal). Bound on create/patch.
+	ProjectID   string       `json:"projectId,omitempty"`
 	KeyResults  []KeyResult  `json:"keyResults,omitempty"`
 }
 
