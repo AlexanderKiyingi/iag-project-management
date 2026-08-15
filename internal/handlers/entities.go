@@ -218,8 +218,16 @@ func (h *Entities) createTask(c *gin.Context) {
 		Type      string `json:"type"`
 		SprintID  *int   `json:"sprintId"`
 	}
-	if err := bindJSONCoerced(c, &in); err != nil || in.Name == "" {
-		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body")
+	// Say which field is wrong. Collapsing "malformed JSON" and "no name" into a
+	// bare "invalid body" gives a client no way to tell a serialisation bug from
+	// a field-name mismatch, and callers that send `title` instead of `name`
+	// (the natural guess) get no hint at all.
+	if err := bindJSONCoerced(c, &in); err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		apierr.JSONStatus(c, http.StatusBadRequest, `a task requires "name"`)
 		return
 	}
 	actor := c.GetHeader("X-Workspace-User")
