@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -234,7 +235,11 @@ func (b *Bus) PublishCommercial(ctx context.Context, eventType string, data map[
 // service subscribes and converts these alerts into dispatch calls — PM no
 // longer writes directly to iag.notifications.
 func (b *Bus) PublishPMAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string) {
-	if !b.enabled || recipient == "" || templateID == "" {
+	if !b.enabled || templateID == "" {
+		return
+	}
+	if recipient == "" {
+		warnNoNotifyRecipient()
 		return
 	}
 	vars := map[string]any{}
@@ -271,4 +276,16 @@ func ParseBrokers(raw string) []string {
 		}
 	}
 	return out
+}
+
+var notifyRecipientWarnOnce sync.Once
+
+// warnNoNotifyRecipient logs once when an alert is dropped for want of a
+// recipient. Without it an unset NOTIFY_DEFAULT_RECIPIENT is indistinguishable
+// from "no alerts were raised": the emitter returns early, nothing reaches the
+// notifications service, and no error appears anywhere.
+func warnNoNotifyRecipient() {
+	notifyRecipientWarnOnce.Do(func() {
+		slog.Warn("pm alert dropped: no recipient and NOTIFY_DEFAULT_RECIPIENT is unset; pm.alert.raised events will not be emitted")
+	})
 }
