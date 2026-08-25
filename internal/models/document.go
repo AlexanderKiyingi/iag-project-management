@@ -33,6 +33,11 @@ type Document struct {
 	DesktopNotificationsEnabled bool            `json:"desktopNotificationsEnabled"`
 	Theme                string                 `json:"theme"`
 	OrgID                string                 `json:"orgId,omitempty"`
+	// Work breakdown (construction): Phase -> Activity -> Work program. See wbs.go
+	// for why these are not tasks.
+	Phases               []Phase                       `json:"phases,omitempty"`
+	Activities           []Activity                    `json:"activities,omitempty"`
+	WorkPrograms         []WorkProgram                 `json:"workPrograms,omitempty"`
 	// Procurement workspace (iag-pm frontend); distinct from PM expense requisitions above.
 	Vendors              []ProcurementVendor           `json:"vendors,omitempty"`
 	Items                []ProcurementItem             `json:"items,omitempty"`

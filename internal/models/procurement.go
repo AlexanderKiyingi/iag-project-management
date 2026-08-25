@@ -55,6 +55,11 @@ type ProcurementBudget struct {
 type ProcurementLineItem struct {
 	ItemID string   `json:"itemId"`
 	Qty    int      `json:"qty"`
+	// Unit is the unit of measure the quantity is counted in (bags, m3, each).
+	// Optional and free-text: the quantity is meaningless without it on a
+	// materials requisition, and there is nowhere else on the requisition to
+	// carry it. Omitted when unset so existing payloads are unchanged.
+	Unit   string   `json:"unit,omitempty"`
 	Price  *float64 `json:"price,omitempty"`
 }
 

@@ -156,6 +156,7 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.GET("/workspace/workload", auth.RequireWorkspaceRead(), h.workspaceWorkload)
 
 	h.registerProcurementRoutes(rg, authz)
+	h.registerWBSRoutes(rg, authz)
 }
 
 func (h *Entities) deleteAudit(c *gin.Context) {

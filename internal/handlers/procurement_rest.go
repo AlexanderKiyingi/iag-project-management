@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -222,6 +223,9 @@ func (h *Entities) submitProcurementPurchaseReq(c *gin.Context) {
 			"requester":             submitted.Requester,
 			"dept":                  submitted.Dept,
 			"priority":              submitted.Priority,
+			// procurement carries this onto the imported requisition as the
+			// justification an approver reads before signing.
+			"justification":         submitted.Notes,
 		}, submitted.ID)
 		claims, _ := middleware.PlatformClaims(c)
 		if claims != nil && claims.Email != "" {
@@ -250,6 +254,48 @@ func applyPurchaseReqPatch(r *models.ProcurementRequisition, patch map[string]an
 	if v, ok := patch["total"].(float64); ok {
 		r.Total = v
 	}
+	// The five fields above were the whole patch surface, so a client that
+	// edited the delivery date, the currency, the department or the lines got a
+	// 200 back and no change: the requisition simply reappeared as it was.
+	// These are the remaining editable fields on the model; id, createdAt and
+	// linkedPO stay server-owned.
+	if v, ok := patch["neededBy"].(string); ok {
+		r.NeededBy = v
+	}
+	if v, ok := patch["currency"].(string); ok {
+		r.Currency = v
+	}
+	if v, ok := patch["dept"].(string); ok {
+		r.Dept = v
+	}
+	if v, ok := patch["requester"].(string); ok {
+		r.Requester = v
+	}
+	if v, ok := patch["budgetId"].(string); ok {
+		r.BudgetID = v
+	}
+	// Lines are replaced wholesale, not merged — a patch that carries "items"
+	// is stating the full list, and a partial merge would have no way to
+	// express a removal.
+	if raw, ok := patch["items"]; ok {
+		if items, err := decodeLineItems(raw); err == nil {
+			r.Items = items
+		}
+	}
+}
+
+// decodeLineItems re-decodes the untyped patch value through JSON so the line
+// items land as the real struct rather than []map[string]any.
+func decodeLineItems(raw any) ([]models.ProcurementLineItem, error) {
+	blob, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var items []models.ProcurementLineItem
+	if err := json.Unmarshal(blob, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func nextVendorID(d *models.Document) string {
