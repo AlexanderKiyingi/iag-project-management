@@ -29,11 +29,11 @@ const (
 	// pm.requisition.submitted carries workspaceOwnerUserId so downstream
 	// services (procurement) can echo it back on approval/rejection, letting
 	// PM find the originating workspace without a global requisition index.
-	TypePMAlertRaised        = "pm.alert.raised"
+	TypePMAlertRaised                = "pm.alert.raised"
 	TypeRequisitionSubmitted         = "pm.requisition.submitted"
 	TypePurchaseRequisitionSubmitted = "pm.purchase_requisition.submitted"
 	TypeTaskAssigned                 = "pm.task.assigned"
-	TypeMentionCreated       = "pm.mention.created"
+	TypeMentionCreated               = "pm.mention.created"
 )
 
 // Bus publishes PM domain events to iag.commercial.
@@ -167,8 +167,11 @@ func (b *Bus) publish(ctx context.Context, evt PlatformEvent, key string) error 
 	if err != nil {
 		return err
 	}
+	// No Topic on the Message: the writer is dedicated to one topic and already
+	// carries it, and kafka-go rejects a Message that sets Topic as well ("Topic
+	// must not be specified for both Writer and Message"). It fails before
+	// sending, so every publish errored while looking transient to the retry loop.
 	return b.commercialWriter.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
 		Key:   []byte(eventKey(key, evt)),
 		Value: body,
 		Headers: []kafka.Header{
@@ -201,8 +204,11 @@ func (b *Bus) DispatchOutbox(ctx context.Context, eventType string, eventKey str
 	if key == "" {
 		key = evt.ID
 	}
+	// No Topic on the Message: the writer is dedicated to one topic and already
+	// carries it, and kafka-go rejects a Message that sets Topic as well ("Topic
+	// must not be specified for both Writer and Message"). It fails before
+	// sending, so every publish errored while looking transient to the retry loop.
 	return b.commercialWriter.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
 		Key:   []byte(key),
 		Value: body,
 		Headers: []kafka.Header{
