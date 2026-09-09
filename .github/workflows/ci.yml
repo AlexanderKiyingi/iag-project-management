@@ -46,7 +46,10 @@ jobs:
       # Build against the committed snapshot instead, as the standalone
       # Dockerfile target does. Refresh it with scripts/sync-platform-go.sh.
       - name: Point platform-go at the vendored snapshot
-        run: go mod edit -replace=github.com/alvor-technologies/iag-platform-go=./third_party/platform-go
+        run: |
+          go mod edit \
+            -replace=github.com/alvor-technologies/iag-platform-go=./third_party/platform-go \
+            -replace=github.com/alvor-technologies/iag-chat-client=./third_party/chat-client
 
       - name: go mod tidy
         run: go mod tidy
