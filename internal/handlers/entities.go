@@ -147,6 +147,7 @@ func (h *Entities) Register(rg *gin.RouterGroup) {
 	rg.DELETE("/sections/:id", authz, h.deleteSection)
 	rg.POST("/requisitions", authz, h.createRequisition)
 	rg.GET("/requisitions", auth.RequireWorkspaceRead(), h.listRequisitions)
+	rg.DELETE("/requisitions/:id", authz, h.deleteRequisition)
 
 	rg.POST("/workspace/members", authz, auth.RequirePerm("pm.admin"), h.addMember)
 	rg.PATCH("/workspace/org", authz, auth.RequirePerm("pm.admin"), h.setOrg)
@@ -1614,6 +1615,62 @@ func (h *Entities) createRequisition(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"requisition": created, "version": ws.Version})
+}
+
+// errRequisitionSettled is a delete refused because the requisition has been
+// approved or already reached finance — money may have moved on it, and the
+// record is the audit trail of that.
+var errRequisitionSettled = errors.New("requisition has been approved or sent to finance and cannot be deleted")
+
+// removeRequisition drops a cash requisition from the document unless it has
+// been approved or handed to finance. A draft or a request still waiting on
+// its approvers is the requester's to withdraw; once a desk has signed it,
+// withdrawing is a rejection, not a deletion.
+func removeRequisition(d *models.Document, id int) error {
+	for i, r := range d.Requisitions {
+		if r.ID != id {
+			continue
+		}
+		if r.FinanceApRef != nil && *r.FinanceApRef != "" {
+			return errRequisitionSettled
+		}
+		switch strings.ToLower(strings.TrimSpace(r.Status)) {
+		case "approved", "paid", "payment authorized", "approved for procurement":
+			return errRequisitionSettled
+		}
+		d.Requisitions = append(d.Requisitions[:i], d.Requisitions[i+1:]...)
+		return nil
+	}
+	return fmt.Errorf("requisition not found")
+}
+
+func (h *Entities) deleteRequisition(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusBadRequest, "invalid id")
+		return
+	}
+	uid, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	actor := c.GetHeader("X-Workspace-User")
+	ws, err := h.Svc.Mutate(c.Request.Context(), uid, func(d *models.Document) error {
+		if err := removeRequisition(d, id); err != nil {
+			return err
+		}
+		models.AppendAudit(d, actor, "requisition.deleted", fmt.Sprintf("deleted requisition #%d", id), nil)
+		return nil
+	})
+	if errors.Is(err, errRequisitionSettled) {
+		apierr.JSONStatus(c, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		writeMutationError(c, err)
+		return
+	}
+	respondWorkspace(c, ws)
 }
 
 func (h *Entities) addMember(c *gin.Context) {
