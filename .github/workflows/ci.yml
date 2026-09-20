@@ -36,13 +36,16 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: Fetch platform-go from meta-repo
+      - name: Point meta-repo replaces at the vendored copies
+        # go.mod's `replace => ../../../shared/...` paths only exist inside the
+        # meta-repo, which is private — cloning it here needed a credential the
+        # runner does not have and failed every run since. The Dockerfile
+        # builds Railway from the committed third_party/ snapshots
+        # (scripts/sync-platform-go.sh refreshes them); test the same code.
         run: |
-          git clone --depth 1 --branch main https://github.com/AlexanderKiyingi/IAG_multi_backend.git /tmp/iag-meta
-          mkdir -p /tmp/deps
-          mv /tmp/iag-meta/shared/platform-go /tmp/deps/platform-go
-          rm -rf /tmp/iag-meta
-          go mod edit -replace=github.com/alvor-technologies/iag-platform-go=/tmp/deps/platform-go
+          go mod edit \
+            -replace=github.com/alvor-technologies/iag-platform-go=./third_party/platform-go \
+            -replace=github.com/alvor-technologies/iag-chat-client=./third_party/chat-client
 
       - name: go mod tidy
         run: go mod tidy
