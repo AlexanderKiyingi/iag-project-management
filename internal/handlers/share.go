@@ -17,9 +17,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/iag/project-management/backend/internal/models"
 	"github.com/iag/project-management/backend/internal/store"
-	"github.com/alvor-technologies/iag-platform-go/apierr"
 )
 
 // PublicShare serves read-only views protected by a public share
@@ -33,11 +33,33 @@ type PublicShare struct {
 	JWKSURL  string
 	Issuer   string
 	Audience string
+	// CheckURL is iag-authentication's POST /v1/share-tokens/check; derived
+	// from JWKSURL when empty. A signature says who issued a link, not
+	// whether it was since revoked or has expired — that is asked here.
+	CheckURL string
 
-	mu       sync.RWMutex
-	keys     map[string]*rsa.PublicKey
-	refresh  time.Time
+	mu      sync.RWMutex
+	keys    map[string]*rsa.PublicKey
+	refresh time.Time
+
+	statusMu sync.Mutex
+	statuses map[string]cachedStatus
 }
+
+type shareStatus struct {
+	Active    bool   `json:"active"`
+	Reason    string `json:"reason"`
+	Resource  string `json:"resource"`
+	CreatedBy string `json:"created_by"`
+}
+
+type cachedStatus struct {
+	status shareStatus
+	at     time.Time
+}
+
+// statusTTL bounds how long a revoked link can still be served.
+const statusTTL = time.Minute
 
 // Register attaches the share endpoints at the engine level so they
 // bypass PlatformAuth.AttachPrincipal (these calls don't carry a
@@ -68,6 +90,9 @@ func (h *PublicShare) getTask(c *gin.Context) {
 	doc, ws, err := h.findDocumentByResource(c.Request.Context(), "task", idStr)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusNotFound, "task not found")
+		return
+	}
+	if !h.honoured(c, claims, resource, doc, ws) {
 		return
 	}
 	for _, t := range doc.Tasks {
@@ -103,6 +128,9 @@ func (h *PublicShare) getProject(c *gin.Context) {
 	doc, ws, err := h.findDocumentByResource(c.Request.Context(), "project", idStr)
 	if err != nil {
 		apierr.JSONStatus(c, http.StatusNotFound, "project not found")
+		return
+	}
+	if !h.honoured(c, claims, resource, doc, ws) {
 		return
 	}
 	project, ok := doc.Projects[idStr]
@@ -167,11 +195,11 @@ func resourceLivesIn(doc models.Document, kind, id string) bool {
 	switch kind {
 	case "task":
 		if intID, err := strconv.Atoi(id); err == nil {
-	for _, t := range doc.Tasks {
-		if t.ID == intID && t.DeletedAt == "" {
-			return true
-		}
-	}
+			for _, t := range doc.Tasks {
+				if t.ID == intID && t.DeletedAt == "" {
+					return true
+				}
+			}
 		}
 	case "project":
 		_, ok := doc.Projects[id]
@@ -181,22 +209,124 @@ func resourceLivesIn(doc models.Document, kind, id string) bool {
 }
 
 // shareTokenAllows compares the requested resource against the
-// `resource` claim in the token. Supports exact match and "task:*"
-// style wildcards for issued tokens that grant a whole resource type.
+// `resource` claim in the token: exactly one record. "task:*" wildcards used
+// to grant every task in every workspace; the issuer no longer mints them and
+// they are refused here for any minted before.
 func shareTokenAllows(claims jwt.MapClaims, resource string) bool {
 	want, _ := claims["resource"].(string)
 	want = strings.TrimSpace(want)
-	if want == "" {
+	return want != "" && !strings.Contains(want, "*") && want == resource
+}
+
+/*
+honoured decides whether a verified token may be served now:
+
+  - the issuer still honours it (not revoked, not expired) and agrees on the
+    resource — asked of iag-authentication, cached a minute;
+  - its creator could see the record: they own the workspace or are one of
+    its members. Links minted before tokens named their creator fall back to
+    the creator the issuer recorded.
+
+It writes the refusal itself. Unable to ask the issuer, it refuses: a public
+link is the one place to fail closed.
+*/
+func (h *PublicShare) honoured(c *gin.Context, claims jwt.MapClaims, resource string, doc models.Document, ws store.Workspace) bool {
+	jti, _ := claims["jti"].(string)
+	st, err := h.status(c.Request.Context(), jti)
+	if err != nil {
+		apierr.JSONStatus(c, http.StatusServiceUnavailable, "could not confirm the share link; try again shortly")
 		return false
 	}
-	if want == resource {
+	if !st.Active {
+		reason := st.Reason
+		if reason == "" {
+			reason = "inactive"
+		}
+		apierr.JSONStatus(c, http.StatusGone, "this share link is no longer valid ("+reason+")")
+		return false
+	}
+	if st.Resource != "" && st.Resource != resource {
+		apierr.JSONStatus(c, http.StatusForbidden, "token does not grant access to this resource")
+		return false
+	}
+	creator, _ := claims["cre"].(string)
+	if creator == "" {
+		creator = st.CreatedBy
+	}
+	if !canSee(creator, doc, ws) {
+		apierr.JSONStatus(c, http.StatusForbidden, "the person who shared this cannot see it")
+		return false
+	}
+	return true
+}
+
+func canSee(userID string, doc models.Document, ws store.Workspace) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+	if ws.OwnerUserID == userID {
 		return true
 	}
-	if strings.HasSuffix(want, ":*") {
-		prefix := strings.TrimSuffix(want, ":*") + ":"
-		return strings.HasPrefix(resource, prefix)
+	for _, m := range doc.Members {
+		if m.UserID == userID {
+			return true
+		}
 	}
 	return false
+}
+
+func (h *PublicShare) checkURL() string {
+	if h.CheckURL != "" {
+		return h.CheckURL
+	}
+	base := strings.TrimSuffix(strings.TrimSpace(h.JWKSURL), "/.well-known/jwks.json")
+	if base == "" || base == strings.TrimSpace(h.JWKSURL) {
+		return ""
+	}
+	return base + "/v1/share-tokens/check"
+}
+
+func (h *PublicShare) status(ctx context.Context, jti string) (shareStatus, error) {
+	jti = strings.TrimSpace(jti)
+	if jti == "" {
+		return shareStatus{Reason: "unknown"}, nil
+	}
+	h.statusMu.Lock()
+	if cached, ok := h.statuses[jti]; ok && time.Since(cached.at) < statusTTL {
+		h.statusMu.Unlock()
+		return cached.status, nil
+	}
+	h.statusMu.Unlock()
+	url := h.checkURL()
+	if url == "" {
+		return shareStatus{}, errors.New("share check URL not configured")
+	}
+	body, _ := json.Marshal(map[string]string{"jti": jti})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
+	if err != nil {
+		return shareStatus{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return shareStatus{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return shareStatus{}, fmt.Errorf("share check: %s", resp.Status)
+	}
+	var st shareStatus
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return shareStatus{}, err
+	}
+	h.statusMu.Lock()
+	if h.statuses == nil {
+		h.statuses = map[string]cachedStatus{}
+	}
+	h.statuses[jti] = cachedStatus{status: st, at: time.Now()}
+	h.statusMu.Unlock()
+	return st, nil
 }
 
 // verifyToken parses the share JWT, fetching auth's JWKS on a 5-minute
