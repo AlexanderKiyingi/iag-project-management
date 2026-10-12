@@ -11,11 +11,14 @@ import (
 )
 
 type Config struct {
-	Addr                string
-	ServiceName         string // OTel service.name / span tag
-	Environment         string // OTel deployment.environment.name
-	JWTIssuer           string
-	JWKSURL             string
+	Addr        string
+	ServiceName string // OTel service.name / span tag
+	Environment string // OTel deployment.environment.name
+	JWTIssuer   string
+	JWKSURL     string
+	// ShareCheckURL is iag-authentication's POST /v1/share-tokens/check;
+	// derived from JWKSURL when unset.
+	ShareCheckURL       string
 	Audience            string // aud claim the service requires on inbound tokens
 	ServiceClientID     string
 	ServiceClientSecret string
@@ -53,6 +56,7 @@ func Load() (Config, error) {
 		Environment:         envOr("APP_ENV", "development"),
 		JWTIssuer:           issuer,
 		JWKSURL:             envOr("JWKS_URL", strings.TrimRight(issuer, "/")+"/.well-known/jwks.json"),
+		ShareCheckURL:       strings.TrimSpace(os.Getenv("SHARE_CHECK_URL")),
 		Audience:            envOr("AUDIENCE", "iag.project-management"),
 		ServiceClientID:     envOr("SERVICE_CLIENT_ID", "iag-project-management"),
 		ServiceClientSecret: strings.TrimSpace(os.Getenv("SERVICE_CLIENT_SECRET")),

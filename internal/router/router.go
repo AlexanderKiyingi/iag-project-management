@@ -86,6 +86,7 @@ func New(opts Options) *gin.Engine {
 		JWKSURL:  opts.Cfg.JWKSURL,
 		Issuer:   opts.Cfg.JWTIssuer,
 		Audience: "iag.share",
+		CheckURL: opts.Cfg.ShareCheckURL,
 	}).Register(r)
 
 	if opts.PlatformAuth != nil {
