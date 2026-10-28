@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"context"
 	"log/slog"
 	"os"
@@ -25,7 +26,7 @@ func taskAssignDedupeKey(taskID int, assignee string) string {
 	return "task-assign:" + strconv.Itoa(taskID) + ":" + strings.ToLower(strings.TrimSpace(assignee)) + ":" + day
 }
 
-func publishTaskAssigned(ctx context.Context, bus *events.Bus, repo *store.Repository, task models.Task, actor, actorEmail string) {
+func publishTaskAssigned(ctx context.Context, bus *events.Bus, repo *store.Repository, task models.Task, actor, actorEmail string, members []models.Member) {
 	if bus == nil || !bus.Enabled() || strings.TrimSpace(task.Assignee) == "" {
 		return
 	}
@@ -53,10 +54,41 @@ func publishTaskAssigned(ctx context.Context, bus *events.Bus, repo *store.Repos
 	if actorEmail != "" {
 		data["actorEmail"] = actorEmail
 	}
-	if recipient := defaultNotifyRecipient(); recipient != "" {
+	// Tell the assignee. The ops desk (NOTIFY_DEFAULT_RECIPIENT) used to get
+	// every assignment and the assignee none; it is now only the fallback
+	// for an assignee with no email on the workspace.
+	if m, ok := memberFor(task.Assignee, members); ok && m.Email != "" {
+		data["recipient"] = m.Email
+	} else if recipient := defaultNotifyRecipient(); recipient != "" {
 		data["recipient"] = recipient
 	}
 	bus.PublishCommercial(ctx, events.TypeTaskAssigned, data, strconv.Itoa(task.ID))
+}
+
+// memberFor resolves a task's assignee — initials in the UI, but a name or
+// an email also matches — to a workspace member.
+func memberFor(assignee string, members []models.Member) (models.Member, bool) {
+	a := strings.TrimSpace(assignee)
+	if a == "" {
+		return models.Member{}, false
+	}
+	for _, m := range members {
+		if strings.EqualFold(m.Initials, a) || strings.EqualFold(m.Name, a) || strings.EqualFold(m.Email, a) {
+			return m, true
+		}
+	}
+	return models.Member{}, false
+}
+
+// workspaceMembers reads the members out of a mutated workspace document.
+func workspaceMembers(ws store.Workspace) []models.Member {
+	var doc struct {
+		Members []models.Member `json:"members"`
+	}
+	if err := json.Unmarshal(ws.Document, &doc); err != nil {
+		return nil
+	}
+	return doc.Members
 }
 
 func publishMentions(ctx context.Context, bus *events.Bus, mentionees []string, author, text, contextKind, contextID string, members []models.Member) {
