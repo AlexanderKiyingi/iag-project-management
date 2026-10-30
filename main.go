@@ -457,6 +457,19 @@ func makeRuleNotifyHook(bus *events.Bus) automation.NotifyHook {
 		if evt.New != nil {
 			vars["taskName"] = evt.New.Name
 		}
+		// alert-in-app (the default template) renders Title and Message; with
+		// only ruleName/trigger/task* the notice arrived empty. A rule's own
+		// params still win.
+		if vars["Title"] == "" {
+			vars["Title"] = "Automation: " + rule.Name
+		}
+		if vars["Message"] == "" {
+			msg := "Rule \"" + rule.Name + "\" ran on " + evt.Type
+			if name := vars["taskName"]; name != "" {
+				msg += " for task \"" + name + "\""
+			}
+			vars["Message"] = msg + "."
+		}
 		bus.PublishPMAlert(context.Background(), channel, recipient, templateID, vars)
 	}
 }

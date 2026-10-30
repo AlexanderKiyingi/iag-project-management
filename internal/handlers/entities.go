@@ -281,7 +281,7 @@ func (h *Entities) createTask(c *gin.Context) {
 		if claims != nil {
 			email = claims.Email
 		}
-		publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, created, actor, email)
+		publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, created, actor, email, workspaceMembers(ws))
 	}
 	c.JSON(http.StatusOK, gin.H{"task": created, "version": ws.Version})
 }
@@ -329,7 +329,7 @@ func (h *Entities) patchTask(c *gin.Context) {
 		if claims != nil {
 			email = claims.Email
 		}
-		publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, updated, actor, email)
+		publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, updated, actor, email, workspaceMembers(ws))
 	}
 	respondWorkspace(c, ws)
 }
@@ -560,7 +560,7 @@ func (h *Entities) createTasksBulk(c *gin.Context) {
 			if strings.TrimSpace(t.Assignee) == "" {
 				continue
 			}
-			publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, t, actor, email)
+			publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, t, actor, email, workspaceMembers(ws))
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"tasks": created, "version": ws.Version})
@@ -627,7 +627,7 @@ func (h *Entities) patchTasksBulk(c *gin.Context) {
 			if strings.TrimSpace(ch.updated.Assignee) == "" || ch.updated.Assignee == ch.prev {
 				continue
 			}
-			publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, ch.updated, actor, email)
+			publishTaskAssigned(c.Request.Context(), h.Svc.Events, h.Svc.Repo, ch.updated, actor, email, workspaceMembers(ws))
 		}
 	}
 	respondWorkspace(c, ws)
