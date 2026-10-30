@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -25,6 +24,11 @@ CREATE TABLE IF NOT EXISTS iag_pm.schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
 
+// migrateLockSQL serialises migration runs across replicas. It is
+// transaction-scoped, so it works through pgbouncer's transaction pooling and
+// releases itself on commit or rollback.
+const migrateLockSQL = `SELECT pg_advisory_xact_lock(hashtext('iag_pm.schema_migrations'))`
+
 type Migration struct {
 	Version  string
 	Body     string
@@ -37,11 +41,8 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		return nil, err
 	}
 
-	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS iag_pm`); err != nil {
-		return nil, fmt.Errorf("create schema iag_pm: %w", err)
-	}
-	if _, err := pool.Exec(ctx, schemaMigrationsDDL); err != nil {
-		return nil, fmt.Errorf("create schema_migrations: %w", err)
+	if err := bootstrap(ctx, pool); err != nil {
+		return nil, err
 	}
 
 	// Safety net for the shared-database cutover: if this service historically
@@ -63,8 +64,12 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		prev, ok := applied[m.Version]
 		switch {
 		case !ok:
-			if err := apply(ctx, pool, m); err != nil {
+			ran, err := apply(ctx, pool, m)
+			if err != nil {
 				return newlyApplied, fmt.Errorf("migration %s: %w", m.Version, err)
+			}
+			if !ran {
+				continue
 			}
 			newlyApplied = append(newlyApplied, m.Version)
 			slog.Info("migration applied", "version", m.Version)
@@ -91,6 +96,28 @@ func Up(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 		}
 	}
 	return newlyApplied, nil
+}
+
+// bootstrap creates the schema and the ledger. CREATE … IF NOT EXISTS is not
+// safe against a concurrent CREATE of the same name (both pass the check, one
+// hits a unique violation), so it runs under the same lock as the migrations.
+func bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, migrateLockSQL); err != nil {
+		return fmt.Errorf("migration bootstrap lock: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS iag_pm`); err != nil {
+		return fmt.Errorf("create schema iag_pm: %w", err)
+	}
+	if _, err := tx.Exec(ctx, schemaMigrationsDDL); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // seedFromLegacyLedger stamps this service's shipped versions into iag_pm's
@@ -193,12 +220,30 @@ func loadApplied(ctx context.Context, pool *pgxpool.Pool) (map[string]appliedRow
 	return out, rows.Err()
 }
 
-func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
+// apply runs a migration the ledger does not record. ran is false when another
+// replica applied it while this one waited for the lock.
+func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) (ran bool, err error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
+
+	// Replicas starting together all read the ledger before any of them has
+	// written to it, so all see this migration as pending. The lock serialises
+	// them; whoever waited re-checks and skips what the winner already applied.
+	if _, err := tx.Exec(ctx, migrateLockSQL); err != nil {
+		return false, fmt.Errorf("lock: %w", err)
+	}
+	var recorded bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM iag_pm.schema_migrations WHERE version = $1)`,
+		m.Version).Scan(&recorded); err != nil {
+		return false, err
+	}
+	if recorded {
+		return false, nil
+	}
 
 	// QueryExecModeSimpleProtocol so multi-statement bodies execute in
 	// full. pgx's default extended protocol parses only the first
@@ -206,15 +251,12 @@ func apply(ctx context.Context, pool *pgxpool.Pool, m Migration) error {
 	// with 0001 recorded as applied but pm_workspaces missing. Mirrors
 	// the fix landed in iag-authentication 839c292.
 	if _, err := tx.Exec(ctx, m.Body, pgx.QueryExecModeSimpleProtocol); err != nil {
-		return err
+		return false, err
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO iag_pm.schema_migrations (version, checksum) VALUES ($1, $2)`,
 		m.Version, m.Checksum); err != nil {
-		if strings.Contains(err.Error(), "23505") {
-			return errors.New("concurrent migration: version already applied by another process")
-		}
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	return true, tx.Commit(ctx)
 }
