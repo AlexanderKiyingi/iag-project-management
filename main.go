@@ -185,7 +185,23 @@ func main() {
 		slog.Info("commercial consumer enabled", "group", cfg.ConsumerGroupID, "dlq", cfg.ConsumerDLQTopic)
 	}
 
-	fileStore := files.NewStore(pool, cfg.UploadDir)
+	// Object storage first, local disk as the fallback. PM_UPLOAD_DIR is a
+	// directory inside the container: without a mounted volume it is lost on
+	// redeploy, and with one Railway refuses more than one replica. Rows
+	// already on disk keep reading from disk (pm_file_blobs.storage_backend);
+	// cmd/backfill-files moves them into the bucket.
+	s3Store := files.NewS3(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket,
+		cfg.S3AccessKeyID, cfg.S3SecretAccessKey, cfg.S3UseSSL)
+	fileStore := files.NewStore(pool, cfg.UploadDir, s3Store)
+	switch {
+	case s3Store != nil:
+		slog.Info("file storage: s3", "bucket", cfg.S3Bucket, "endpoint", cfg.S3Endpoint)
+	case cfg.IsDeployed():
+		slog.Warn("file storage: local disk in a deployed environment — uploads are LOST on redeploy unless a volume is mounted, and a volume blocks replicas; set S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY",
+			"dir", cfg.UploadDir)
+	default:
+		slog.Info("file storage: local disk", "dir", cfg.UploadDir)
+	}
 
 	auditRecorder := audit.NewPgxRecorder(pool, 0)
 	defer auditRecorder.Close()

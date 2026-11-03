@@ -39,7 +39,7 @@ RUN set -eu; \
     go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP} \
         -replace=github.com/alvor-technologies/iag-chat-client=${CHAT_CLIENT_DEP}; \
     mkdir -p /out; \
-    for cmd in . ./cmd/healthcheck ./cmd/jobs; do \
+    for cmd in . ./cmd/healthcheck ./cmd/jobs ./cmd/backfill-files; do \
         name=$(basename "$cmd"); [ "$name" = "." ] && name=api; \
         CGO_ENABLED=0 GOOS=linux go build \
             -trimpath \
@@ -60,7 +60,7 @@ COPY services/commercial/project-management/ .
 ARG VERSION=dev
 RUN set -eu; \
     mkdir -p /out; \
-    for cmd in . ./cmd/healthcheck ./cmd/jobs; do \
+    for cmd in . ./cmd/healthcheck ./cmd/jobs ./cmd/backfill-files; do \
         name=$(basename "$cmd"); [ "$name" = "." ] && name=api; \
         CGO_ENABLED=0 GOOS=linux go build \
             -trimpath \
