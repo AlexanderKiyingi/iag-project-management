@@ -35,6 +35,16 @@ type Config struct {
 	UploadDir           string
 	RemindersInterval   time.Duration
 
+	// S3-compatible object storage (Cloudflare R2 in production). When set,
+	// uploads go to the bucket instead of UploadDir, which lets the service run
+	// more than one replica (Railway volumes forbid replicas).
+	S3Endpoint        string
+	S3Region          string
+	S3Bucket          string
+	S3AccessKeyID     string
+	S3SecretAccessKey string
+	S3UseSSL          bool
+
 	// Consumer settings (Gap #1: PM subscribes to iag.commercial).
 	ConsumerEnabled  bool
 	ConsumerGroupID  string
@@ -71,6 +81,12 @@ func Load() (Config, error) {
 		EventBusEnabled:     strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
 		UploadDir:           envOr("PM_UPLOAD_DIR", "./data/pm-uploads"),
 		RemindersInterval:   parseDuration("REMINDERS_INTERVAL", 15*time.Minute),
+		S3Endpoint:          strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
+		S3Region:            envOr("S3_REGION", "auto"),
+		S3Bucket:            strings.TrimSpace(os.Getenv("S3_BUCKET")),
+		S3AccessKeyID:       strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),
+		S3SecretAccessKey:   strings.TrimSpace(os.Getenv("S3_SECRET_ACCESS_KEY")),
+		S3UseSSL:            !strings.EqualFold(envOr("S3_USE_SSL", "true"), "false"),
 		ConsumerEnabled:     strings.EqualFold(os.Getenv("CONSUMER_ENABLED"), "true"),
 		ConsumerGroupID:     envOr("CONSUMER_GROUP_ID", "iag.project-management.commercial"),
 		ConsumerDLQTopic:    envOr("CONSUMER_DLQ_TOPIC", "iag.dlq.project-management"),
@@ -94,6 +110,14 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("JWKS_URL is required")
 	}
 	return cfg, nil
+}
+
+// IsDeployed reports a hosted (non-laptop) run: APP_ENV says production, or
+// Railway's own variables are present. Used only to decide how loudly to warn.
+func (c Config) IsDeployed() bool {
+	env := strings.ToLower(c.Environment)
+	return env == "production" || env == "prod" ||
+		os.Getenv("RAILWAY_ENVIRONMENT") != "" || os.Getenv("RAILWAY_ENVIRONMENT_NAME") != ""
 }
 
 func envOr(key, fallback string) string {
